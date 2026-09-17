@@ -1,6 +1,8 @@
+from __future__ import annotations
 import configparser
 import logging
 import os
+import sys
 import pathlib
 import urllib.parse
 from typing import Any, Dict, Final, List, Literal, Optional, Tuple, Type, Union
@@ -31,6 +33,8 @@ OPIK_PROJECT_DEFAULT_NAME: Final[str] = "Default Project"
 OPIK_WORKSPACE_DEFAULT_NAME: Final[str] = "default"
 
 CONFIG_FILE_PATH_DEFAULT: Final[str] = "~/.opik.config"
+
+ANALYTICS_URL_DEFAULT: Final[str] = "https://stats.comet.com/notify/event/"
 
 LOGGER = logging.getLogger(__name__)
 
@@ -109,6 +113,9 @@ class OpikConfig(pydantic_settings.BaseSettings):
     workspace: str = OPIK_WORKSPACE_DEFAULT_NAME
     """Opik workspace"""
 
+    default_llm: str = "openai/gpt-5-nano"
+    """Default LLM model name used by evaluation model factories when model is not provided."""
+
     api_key: Optional[str] = None
     """Opik API key. This is not required if you are running against open source Opik installation"""
 
@@ -167,6 +174,15 @@ class OpikConfig(pydantic_settings.BaseSettings):
     """
     If set to True, then `@track` decorator and `track_LIBRARY(...)` integrations do not log any data.
     Any other API will continue working.
+
+    This setting can be overridden at runtime using:
+    - opik.set_tracing_active(False)  # Disable tracing
+    - opik.set_tracing_active(True)   # Enable tracing
+    - opik.is_tracing_active()        # Check current state
+    - opik.reset_tracing_to_config_default()  # Reset to this config value
+
+    Runtime overrides take precedence over this static configuration.
+
     We do not recommend disable tracking unless you only use tracking functionalities in your project because
     it might lead to unexpected results for the features that rely on spans/traces created.
     """
@@ -176,12 +192,26 @@ class OpikConfig(pydantic_settings.BaseSettings):
     If set to True, Opik will send the information about the errors to Sentry.
     """
 
-    sentry_dsn: str = "https://ceea3c150b0c2968e5913e9e9e919d5b@o168229.ingest.us.sentry.io/4508620148441088"  # 14.05.2025
+    sentry_dsn: str = "https://fbde8a9ef528f379de25bdfb19749ca5@o168229.ingest.us.sentry.io/4508620148441088"  # 16.04.2026
     """
     Sentry project DSN which is used as a destination for sentry events.
     In case there is a need to update reporting rules and stop receiving events from existing users,
     current DSN should disabled in Sentry project settings, a new DSN should be created and placed here
     instead of the old one.
+    """
+
+    analytics_enable: bool = True
+    """
+    If set to True, Opik reports product analytics (BI) events describing which SDK
+    features are used - never their payloads. Setting it to False is the way to switch
+    reporting off. See `opik.analytics`.
+    """
+
+    analytics_url: str = ANALYTICS_URL_DEFAULT
+    """
+    Where usage analytics are sent. Comet's stats collector, which forwards them to the
+    same pipeline the Opik backend reports through. It takes no credentials. Set this to
+    an empty value to stop analytics being reported at all.
     """
 
     enable_litellm_models_monitoring: bool = True
@@ -196,12 +226,43 @@ class OpikConfig(pydantic_settings.BaseSettings):
     If set to True - Opik will compress the JSON request body.
     """
 
+    request_compression_level: int = pydantic.Field(default=6, ge=0, le=9)
+    """
+    zlib level used when compressing JSON request bodies, 0-9.
+
+    Python's `gzip.compress` defaults to 9, which on Opik payloads costs several times the
+    CPU of level 6 for well under 1% fewer bytes. Level 1 is cheaper again but puts
+    noticeably more bytes on the wire, so it suits a client that is CPU-bound rather than
+    bandwidth-bound.
+    """
+
+    dataset_upload_compression_level: int = pydantic.Field(default=1, ge=0, le=9)
+    """
+    zlib level used when compressing dataset item uploads, 0-9.
+
+    Lower than `request_compression_level` because a bulk upload is large enough that
+    compression, not the network, sets the wall time: on a 1,500-item upload of 206.1 MiB,
+    level 1 moved 283.40 items/s against 121.67 at level 6, for 77.6 MiB on the wire
+    against 67.9 MiB. Paying 14.2% more bytes for 2.33x the throughput only pays off at
+    that size, which is why ordinary requests keep the higher level.
+
+    Applies to every dataset upload: a `Dataset` prepares its own request bodies whichever
+    client it was built from, so this level is the one they are compressed at. Ordinary
+    requests still go through the shared HTTP client at `request_compression_level`.
+    """
+
     guardrail_timeout: int = 30
     """
     Timeout for guardrail.validate calls in seconds. If response takes more than this, it will be considered failed and raises an Exception.
     """
 
-    maximal_queue_size: int = 100_000
+    guardrails_url_override: Optional[str] = None
+    """
+    URL for the guardrails backend service.
+    When set, overrides the default guardrails URL derived from url_override.
+    """
+
+    maximal_queue_size: int = 1_000_000
     """
     Specifies the maximum number of messages that can be queued for delivery when a connection error occurs or rate limiting is in effect.
     """
@@ -210,10 +271,103 @@ class OpikConfig(pydantic_settings.BaseSettings):
     Defines the factor applied to the `maximal_queue_size` to reduce the maximal message queue size when batching is enabled.
     """
 
-    log_start_trace_span: bool = False
+    log_start_trace_span: bool = True
     """
     If set to True, both the start and end of the trace and span will be logged. This is useful for traces and spans that span long durations.
     For shorter traces/spans, it is recommended to keep this setting disabled to minimize data logging overhead.
+    """
+
+    min_base64_embedded_attachment_size: int = 256_000
+    """
+    Minimum size of the attachment string in bytes that will be kept embedded in the base64 string. (250KB)
+    Attachments larger than this size will be extracted from inputs/outputs of spans/traces and uploaded to the Opik backend.
+    """
+
+    is_attachment_extraction_active: bool = True
+    """
+    If set to True, attachments larger than `min_base64_embedded_attachment_size` will be extracted from spans/traces and uploaded to the Opik backend.
+    """
+
+    max_payload_size_mb: int = 20
+    """
+    Per-object size limit (in MB) for the truncatable fields (``input``/``output``) of every span
+    **and trace**, applied right before it is sent to the backend (after attachments have been
+    extracted). An ``input`` or ``output`` over this limit - or the two together over it - is
+    replaced with a truncation marker and a warning is logged. ``metadata`` is never truncated (it
+    holds small routing/cost fields the backend relies on, e.g. ``thread_id`` and ``model``) and is
+    not counted toward this limit; an oversized ``metadata`` is left to the server-side
+    request/document guards (413/400) rather than trimmed. Set to ``0`` (or any value ``<= 0``) to
+    disable truncation entirely. Log large payloads as attachments instead to avoid truncation.
+    """
+
+    connection_monitor_ping_interval: float = 10
+    """
+    Interval in seconds between OPIK server's connection monitoring pings.
+    """
+
+    connection_monitor_check_timeout: float = 5
+    """
+    Timeout in seconds for OPIK server's connection monitoring checks.
+    """
+
+    runner_poll_interval: float = 0.5
+    """
+    Interval in seconds between polls for new jobs while the local runner
+    (`opik connect` / `opik endpoint`) is idle. Each idle poll is one request to
+    the Opik server, so the default of 0.5s produces ~120 requests/minute.
+    Increase this value if a corporate firewall or proxy throttles or blocks the
+    sustained polling traffic (at the cost of slower job pickup).
+    """
+
+    replay_batch_size: int = 50
+    """
+    Number of failed messages to replay in a single batch after connection to the OPIK server is restored.
+    The messages are replayed in batches to avoid overwhelming the system with too many requests at once and to control memory consumption.
+    """
+    replay_batch_replay_delay: float = 0.5
+    """
+    Delay in seconds between replaying batches of failed messages after connection to the OPIK server is restored.
+    This is to control memory consumption and to avoid overwhelming the system with too many requests at once.
+    """
+
+    replay_tick_interval: float = 0.3
+    """
+    Interval in seconds between replay manager thread's ticks.
+    This is to control the frequency of replay manager thread's operations, such as checking for status of connection to the OPIK server and replaying failed messages if connection restored.
+    """
+
+    unauthorized_message_type_retry_interval: float = 10.0
+    """
+    Interval in seconds between retrying unauthorized message types.
+    This is to control the frequency of retrying unauthorized message types.
+    """
+
+    unauthorized_message_type_max_retry_count: Optional[int] = None
+    """
+    Maximum number of retries for unauthorized message types.
+    This is to control the number of times unauthorized message types are retried before giving up. If None, there is no limit.
+    """
+
+    environment: Optional[str] = None
+    """
+    Default environment name applied to traces and spans when no explicit
+    ``environment=`` argument is provided.
+    Env var: OPIK_ENVIRONMENT
+    """
+
+    suppress_batching_update_warning: bool = False
+    """
+    Suppress the warning about potential data loss when calling .end() or .update()
+    on spans/traces with batching enabled. Set to True if your updates happen well
+    after creation and the warning is not relevant.
+    Env var: OPIK_SUPPRESS_BATCHING_UPDATE_WARNING
+    """
+
+    prompt_cache_ttl_seconds: pydantic.PositiveInt = 300
+    """
+    TTL in seconds for cached prompts. Controls how long unpinned prompts are kept
+    before being refreshed from the backend. Minimum value is 1.
+    Env var: OPIK_PROMPT_CACHE_TTL_SECONDS
     """
 
     @property
@@ -243,10 +397,12 @@ class OpikConfig(pydantic_settings.BaseSettings):
 
     @property
     def guardrails_backend_host(self) -> str:
+        if self.guardrails_url_override is not None:
+            return self.guardrails_url_override
         return url_helpers.get_base_url(self.url_override) + "guardrails/"
 
     @pydantic.model_validator(mode="after")
-    def _set_url_override_from_api_key(self) -> "OpikConfig":
+    def _set_url_override_from_api_key(self) -> OpikConfig:
         url_was_not_provided = (
             "url_override" not in self.model_fields_set or self.url_override is None
         )
@@ -277,6 +433,7 @@ class OpikConfig(pydantic_settings.BaseSettings):
         config_file_content["opik"] = {
             "url_override": self.url_override,
             "workspace": self.workspace,
+            "project_name": self.project_name,
         }
 
         if self.api_key is not None:
@@ -313,6 +470,8 @@ class OpikConfig(pydantic_settings.BaseSettings):
         show_misconfiguration_message : A flag indicating whether to display detailed error messages if the configuration
             is determined to be misconfigured. Defaults to False.
         """
+        if "pytest" in sys.modules:
+            return False
 
         is_misconfigured_flag, error_message = (
             self.get_misconfiguration_detection_results()
@@ -376,7 +535,7 @@ class OpikConfig(pydantic_settings.BaseSettings):
             error_message = (
                 "The API key must be specified to log data to https://www.comet.com/opik.\n"
                 "You can use `opik configure` CLI command to configure your environment for logging.\n"
-                "See the configuration details in the docs: https://www.comet.com/docs/opik/tracing/sdk_configuration.\n"
+                "See the configuration details in the docs: https://www.comet.com/docs/opik/tracing/advanced/sdk_configuration.\n"
             )
             return True, error_message
 
@@ -402,7 +561,7 @@ class OpikConfig(pydantic_settings.BaseSettings):
         ):
             error_message = (
                 "Open source installations do not support workspace specification. Only `default` is available.\n"
-                "See the configuration details in the docs: https://www.comet.com/docs/opik/tracing/sdk_configuration\n"
+                "See the configuration details in the docs: https://www.comet.com/docs/opik/tracing/advanced/sdk_configuration\n"
                 "If you need advanced workspace management - you may consider using our cloud offer (https://www.comet.com/site/pricing/)\n"
                 "or contact our team for purchasing and setting up a self-hosted installation.\n"
             )

@@ -30,23 +30,23 @@ public class ClosingTraceThreadSubscriber extends BaseRedisSubscriber<ProjectWit
     @Inject
     protected ClosingTraceThreadSubscriber(@NonNull @Config TraceThreadConfig config,
             @NonNull RedissonReactiveClient redisson, TraceThreadService traceThreadService) {
-        super(config, redisson, TraceThreadBufferConfig.BUFFER_SET_NAME, TraceThreadConfig.PAYLOAD_FIELD);
+        super(config,
+                redisson,
+                TraceThreadConfig.PAYLOAD_FIELD,
+                SUBSCRIBER_NAMESPACE,
+                TraceThreadBufferConfig.BUFFER_SET_NAME);
         this.traceThreadService = traceThreadService;
         this.config = config;
     }
 
     @Override
-    protected String getMetricNamespace() {
-        return SUBSCRIBER_NAMESPACE;
-    }
-
-    @Override
     protected Mono<Void> processEvent(ProjectWithPendingClosureTraceThreads message) {
         Instant now = Instant.now();
-        Duration timeoutToMarkThreadAsInactive = config.getTimeoutToMarkThreadAsInactive().toJavaDuration();
+        Duration defaultTimeoutToMarkThreadAsInactive = config.getTimeoutToMarkThreadAsInactive().toJavaDuration();
 
         return traceThreadService
-                .processProjectWithTraceThreadsPendingClosure(message.projectId(), now, timeoutToMarkThreadAsInactive)
+                .processProjectWithTraceThreadsPendingClosure(message.projectId(), now,
+                        defaultTimeoutToMarkThreadAsInactive, config.getColdStartLookback().toJavaDuration())
                 .contextWrite(context -> context.put(USER_NAME, DEFAULT_USER)
                         .put(WORKSPACE_ID, message.workspaceId()));
     }

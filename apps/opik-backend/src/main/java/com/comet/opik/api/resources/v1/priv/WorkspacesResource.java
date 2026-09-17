@@ -1,13 +1,21 @@
 package com.comet.opik.api.resources.v1.priv;
 
 import com.codahale.metrics.annotation.Timed;
+import com.comet.opik.api.TokenUsageNames;
+import com.comet.opik.api.WorkspaceConfiguration;
 import com.comet.opik.api.error.ErrorMessage;
+import com.comet.opik.api.filter.FiltersFactory;
 import com.comet.opik.api.metrics.WorkspaceMetricRequest;
 import com.comet.opik.api.metrics.WorkspaceMetricResponse;
 import com.comet.opik.api.metrics.WorkspaceMetricsSummaryRequest;
 import com.comet.opik.api.metrics.WorkspaceMetricsSummaryResponse;
+import com.comet.opik.api.metrics.WorkspaceSpanMetricRequest;
+import com.comet.opik.api.metrics.WorkspaceTokenUsageNamesRequest;
+import com.comet.opik.domain.WorkspaceConfigurationService;
 import com.comet.opik.domain.WorkspaceMetricsService;
 import com.comet.opik.infrastructure.auth.RequestContext;
+import com.comet.opik.infrastructure.auth.RequiredPermissions;
+import com.comet.opik.infrastructure.auth.WorkspaceUserPermission;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -19,7 +27,11 @@ import jakarta.inject.Provider;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.DELETE;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.NotFoundException;
 import jakarta.ws.rs.POST;
+import jakarta.ws.rs.PUT;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
@@ -27,6 +39,9 @@ import jakarta.ws.rs.core.Response;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import reactor.core.publisher.Mono;
+
+import java.util.List;
 
 import static com.comet.opik.utils.AsyncUtils.setRequestContext;
 
@@ -40,8 +55,11 @@ import static com.comet.opik.utils.AsyncUtils.setRequestContext;
 public class WorkspacesResource {
 
     private final @NonNull WorkspaceMetricsService workspaceMetricsService;
+    private final @NonNull WorkspaceConfigurationService workspaceConfigurationService;
+    private final @NonNull FiltersFactory filtersFactory;
     private final @NonNull Provider<RequestContext> requestContext;
 
+    @Deprecated
     @POST
     @Path("/metrics/summaries")
     @Operation(operationId = "metricsSummary", summary = "Get metrics summary", description = "Get metrics summary", responses = {
@@ -64,6 +82,7 @@ public class WorkspacesResource {
         return Response.ok().entity(response).build();
     }
 
+    @Deprecated
     @POST
     @Path("/metrics")
     @Operation(operationId = "getMetric", summary = "Get metric daily data", description = "Get metric daily data", responses = {
@@ -133,5 +152,126 @@ public class WorkspacesResource {
                 workspaceId);
 
         return Response.ok().entity(response).build();
+    }
+
+    @POST
+    @Path("/metrics/spans")
+    @Operation(operationId = "getWorkspaceSpanMetric", summary = "Get workspace span metric", description = "Gets a span metric time series aggregated across the workspace. When project_ids is empty, all projects in the workspace are included; otherwise only the given projects.", responses = {
+            @ApiResponse(responseCode = "200", description = "Workspace span metric", content = @Content(schema = @Schema(implementation = WorkspaceMetricResponse.class))),
+            @ApiResponse(responseCode = "400", description = "Bad Request", content = @Content(schema = @Schema(implementation = ErrorMessage.class)))
+    })
+    @RequiredPermissions(WorkspaceUserPermission.PROJECT_DATA_VIEW)
+    public Response getWorkspaceSpanMetric(
+            @RequestBody(content = @Content(schema = @Schema(implementation = WorkspaceSpanMetricRequest.class))) @NotNull @Valid WorkspaceSpanMetricRequest request) {
+
+        String workspaceId = requestContext.get().getWorkspaceId();
+
+        // Same validation the query-param paths get: these filters reach the analytics query builder, which has no
+        // template for an operator the field's type does not support.
+        var validatedRequest = request.toBuilder()
+                .filters(filtersFactory.validateFilter(request.filters()))
+                .build();
+
+        log.info("Retrieve workspace span metric '{}' for projectIds '{}', on workspace_id '{}'", request.metricType(),
+                request.projectIds(), workspaceId);
+        WorkspaceMetricResponse response = workspaceMetricsService.getWorkspaceSpanMetric(validatedRequest)
+                .contextWrite(ctx -> setRequestContext(ctx, requestContext))
+                .block();
+        log.info("Retrieved workspace span metric '{}' for projectIds '{}', on workspace_id '{}'", request.metricType(),
+                request.projectIds(), workspaceId);
+
+        return Response.ok().entity(response).build();
+    }
+
+    @POST
+    @Path("/token-usage/names")
+    @Operation(operationId = "getWorkspaceTokenUsageNames", summary = "Get workspace token usage names", description = "Gets the distinct span token usage key names aggregated across the workspace. When project_ids is empty, all projects in the workspace are included; otherwise only the given projects.", responses = {
+            @ApiResponse(responseCode = "200", description = "Token Usage names resource", content = @Content(schema = @Schema(implementation = TokenUsageNames.class))),
+            @ApiResponse(responseCode = "400", description = "Bad Request", content = @Content(schema = @Schema(implementation = ErrorMessage.class)))
+    })
+    @RequiredPermissions(WorkspaceUserPermission.PROJECT_DATA_VIEW)
+    public Response getWorkspaceTokenUsageNames(
+            @RequestBody(content = @Content(schema = @Schema(implementation = WorkspaceTokenUsageNamesRequest.class))) @NotNull @Valid WorkspaceTokenUsageNamesRequest request) {
+
+        String workspaceId = requestContext.get().getWorkspaceId();
+
+        log.info("Retrieve workspace token usage names for projectIds '{}', on workspace_id '{}'", request.projectIds(),
+                workspaceId);
+        List<String> tokenUsageNames = workspaceMetricsService.getWorkspaceTokenUsageNames(request.projectIds())
+                .contextWrite(ctx -> setRequestContext(ctx, requestContext))
+                .block();
+        log.info("Retrieved workspace token usage names '{}' for projectIds '{}', on workspace_id '{}'",
+                tokenUsageNames.size(), request.projectIds(), workspaceId);
+
+        return Response.ok(TokenUsageNames.builder().names(tokenUsageNames).build()).build();
+    }
+
+    @GET
+    @Path("/configurations")
+    @Operation(operationId = "getWorkspaceConfiguration", summary = "Get workspace configuration", description = "Get workspace configuration", responses = {
+            @ApiResponse(responseCode = "200", description = "Workspace Configuration", content = @Content(schema = @Schema(implementation = WorkspaceConfiguration.class))),
+            @ApiResponse(responseCode = "404", description = "Configuration Not Found", content = @Content(schema = @Schema(implementation = ErrorMessage.class)))
+    })
+    public Response getWorkspaceConfiguration() {
+        String workspaceId = requestContext.get().getWorkspaceId();
+
+        log.info("Getting workspace configuration for workspace_id '{}'", workspaceId);
+
+        var configuration = workspaceConfigurationService.getConfiguration()
+                .switchIfEmpty(Mono.defer(() -> {
+                    log.info("No workspace configuration found for workspace '{}'", workspaceId);
+                    return Mono.error(new NotFoundException("No workspace configuration found for workspace"));
+                }))
+                .contextWrite(ctx -> setRequestContext(ctx, requestContext))
+                .block();
+
+        log.info("Found workspace configuration for workspace_id '{}'", workspaceId);
+
+        return Response.ok().entity(configuration).build();
+    }
+
+    @PUT
+    @Path("/configurations")
+    @RequiredPermissions(WorkspaceUserPermission.WORKSPACE_SETTINGS_CONFIGURE)
+    @Operation(operationId = "upsertWorkspaceConfiguration", summary = "Upsert workspace configuration", description = "Upsert workspace configuration", responses = {
+            @ApiResponse(responseCode = "200", description = "Configuration Updated", content = @Content(schema = @Schema(implementation = WorkspaceConfiguration.class))),
+            @ApiResponse(responseCode = "400", description = "Bad Request", content = @Content(schema = @Schema(implementation = ErrorMessage.class))),
+            @ApiResponse(responseCode = "422", description = "Unprocessable Content", content = @Content(schema = @Schema(implementation = ErrorMessage.class)))
+    })
+    public Response upsertWorkspaceConfiguration(
+            @RequestBody(content = @Content(schema = @Schema(implementation = WorkspaceConfiguration.class))) @Valid @NotNull WorkspaceConfiguration configuration) {
+
+        String workspaceId = requestContext.get().getWorkspaceId();
+
+        log.info("Upserting workspace configuration for workspace_id '{}'", workspaceId);
+
+        workspaceConfigurationService.upsertConfiguration(configuration)
+                .contextWrite(ctx -> setRequestContext(ctx, requestContext))
+                .block();
+
+        log.info("Upserted workspace configuration for workspace_id '{}'", workspaceId);
+
+        return Response.noContent().build();
+    }
+
+    @DELETE
+    @Path("/configurations")
+    @RequiredPermissions(WorkspaceUserPermission.WORKSPACE_SETTINGS_CONFIGURE)
+    @Operation(operationId = "deleteWorkspaceConfiguration", summary = "Delete workspace configuration", description = "Delete workspace configuration", responses = {
+            @ApiResponse(responseCode = "204", description = "Configuration Deleted"),
+            @ApiResponse(responseCode = "404", description = "Configuration Not Found", content = @Content(schema = @Schema(implementation = ErrorMessage.class)))
+    })
+    public Response deleteWorkspaceConfiguration() {
+        String workspaceId = requestContext.get().getWorkspaceId();
+
+        log.info("Deleting workspace configuration for workspace_id '{}'", workspaceId);
+
+        workspaceConfigurationService.deleteConfiguration()
+                .contextWrite(ctx -> setRequestContext(ctx, requestContext))
+                .block();
+
+        log.info("Deleted workspace configuration for workspace_id '{}'", workspaceId);
+
+        return Response.noContent().build();
     }
 }

@@ -2,10 +2,10 @@ import types
 from typing import TypeVar, List, Any, Set
 from . import opik_tracer
 import logging
-from opik import _logging
 
 from google.adk.tools import agent_tool
 from google.adk import agents
+from ... import analytics
 
 LOGGER = logging.getLogger(__name__)
 
@@ -42,9 +42,13 @@ class RecursiveCallbackInjector:
                 setattr(agent, callback_field_name, callback_func)
             elif isinstance(
                 current_callback_value, list
-            ) and not _contains_opik_tracer_callback(callbacks=current_callback_value):
+            ) and not self._contains_opik_tracer_callback(
+                callbacks=current_callback_value
+            ):
                 current_callback_value.append(callback_func)
-            elif not _is_opik_callback_function(current_callback_value):
+            elif not self._is_opik_callback_function(
+                current_callback_value
+            ) and callable(current_callback_value):
                 setattr(
                     agent, callback_field_name, [current_callback_value, callback_func]
                 )
@@ -90,19 +94,17 @@ class RecursiveCallbackInjector:
             except Exception as e:
                 LOGGER.warning(f"Failed to track agent tool: {e}")
 
+    def _is_opik_callback_function(self, obj: Any) -> bool:
+        if not callable(obj):
+            return False
 
-def _is_opik_callback_function(obj: Any) -> bool:
-    if not callable(obj):
+        if isinstance(obj, types.MethodType):
+            return isinstance(obj.__self__, type(self._opik_tracer))
+
         return False
 
-    if isinstance(obj, types.MethodType):
-        return isinstance(obj.__self__, opik_tracer.OpikTracer)
-
-    return False
-
-
-def _contains_opik_tracer_callback(callbacks: List) -> bool:
-    return any(_is_opik_callback_function(callback) for callback in callbacks)
+    def _contains_opik_tracer_callback(self, callbacks: List) -> bool:
+        return any(self._is_opik_callback_function(callback) for callback in callbacks)
 
 
 def track_adk_agent_recursive(
@@ -118,11 +120,8 @@ def track_adk_agent_recursive(
     Returns:
         The modified root agent with tracking enabled
     """
-    _logging.log_once_at_level(
-        logging.INFO,
-        "`track_adk_agent_recursive` is experimental feature. Please let us know if something is not working as expected: https://github.com/comet-ml/opik/issues",
-        logger=LOGGER,
-    )
+    analytics.track_event("integration", "adk_recursive")
+
     recursive_callback_injector = RecursiveCallbackInjector(tracer)
     recursive_callback_injector.inject(root_agent)
 

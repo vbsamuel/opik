@@ -2,7 +2,8 @@ import { QueryFunctionContext, useQuery } from "@tanstack/react-query";
 import api, { QueryConfig, SPANS_KEY, SPANS_REST_ENDPOINT } from "@/api/api";
 import { Span, SPAN_TYPE } from "@/types/traces";
 import { Filters } from "@/types/filters";
-import { generateSearchByIDFilters, processFilters } from "@/lib/filters";
+import { generateLogsSourceFilter, processFilters } from "@/lib/filters";
+import { LOGS_SOURCE } from "@/types/traces";
 import { Sorting } from "@/types/sorting";
 import { processSorting } from "@/lib/sorting";
 
@@ -16,7 +17,11 @@ export type UseSpansListParams = {
   page: number;
   size: number;
   truncate?: boolean;
+  stripAttachments?: boolean;
   exclude?: string[];
+  fromTime?: string;
+  toTime?: string;
+  logsSource?: LOGS_SOURCE;
 };
 
 export type UseSpansListResponse = {
@@ -37,7 +42,11 @@ const getSpansList = async (
     size,
     page,
     truncate,
+    stripAttachments,
     exclude,
+    fromTime,
+    toTime,
+    logsSource,
   }: UseSpansListParams,
 ) => {
   const { data } = await api.get(SPANS_REST_ENDPOINT, {
@@ -46,12 +55,21 @@ const getSpansList = async (
       project_id: projectId,
       ...(traceId && { trace_id: traceId }),
       ...(type && { type }),
-      ...processFilters(filters, generateSearchByIDFilters(search)),
+      ...processFilters(
+        filters,
+        logsSource ? generateLogsSourceFilter(logsSource) : undefined,
+      ),
       ...processSorting(sorting),
+      ...(search && { search }),
       ...(exclude && { exclude: JSON.stringify(exclude) }),
+      ...(truncate !== undefined && { truncate }),
+      ...(stripAttachments !== undefined && {
+        strip_attachments: stripAttachments,
+      }),
       size,
       page,
-      truncate,
+      ...(fromTime && { from_time: fromTime }),
+      ...(toTime && { to_time: toTime }),
     },
   });
 

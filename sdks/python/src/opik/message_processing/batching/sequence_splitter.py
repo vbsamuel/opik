@@ -1,6 +1,6 @@
 import logging
 from typing import List, Optional, TypeVar, Sequence, Any
-from opik import jsonable_encoder
+import opik.jsonable_encoder as jsonable_encoder
 
 T = TypeVar("T")
 
@@ -11,6 +11,15 @@ def _get_expected_payload_size_MB(item: T) -> float:
     encoded_for_json = jsonable_encoder.encode(item)
     size = _get_json_size(encoded_for_json)
     return size / (1024 * 1024)
+
+
+def get_payload_size_MB(item: T) -> float:
+    """Estimate the JSON-serialized size of ``item`` in megabytes.
+
+    Public wrapper around the internal size estimator, reused by span-truncation
+    so the size measured for truncation matches the batching size estimate.
+    """
+    return _get_expected_payload_size_MB(item)
 
 
 def _get_json_size(obj: Any) -> Any:
@@ -61,9 +70,9 @@ def split_into_batches(
     max_payload_size_MB: Optional[float] = None,
     max_length: Optional[int] = None,
 ) -> List[List[T]]:
-    assert (max_payload_size_MB is not None) or (
-        max_length is not None
-    ), "At least one limitation must be set for splitting"
+    assert (max_payload_size_MB is not None) or (max_length is not None), (
+        "At least one limitation must be set for splitting"
+    )
 
     if max_length is None:
         max_length = len(items)

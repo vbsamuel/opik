@@ -5,11 +5,11 @@ from typing import Any, Dict
 import pytest
 from google import genai
 from google.genai.types import HttpOptions, GenerateContentConfig
-from google.genai import errors as genai_errors
 import opik
 from opik.config import OPIK_PROJECT_DEFAULT_NAME
 from opik.integrations.genai import track_genai
 
+from ... import llm_constants
 from ...testlib import (
     ANY_BUT_NONE,
     ANY_DICT,
@@ -20,32 +20,19 @@ from ...testlib import (
     assert_dict_has_keys,
     assert_equal,
 )
-import tenacity
 
 pytestmark = pytest.mark.usefixtures("ensure_vertexai_configured")
 
-MODEL = "gemini-2.0-flash"
+MODEL = llm_constants.GEMINI_FLASH
 
-EXPECTED_GOOGLE_USAGE_LOGGED_FORMAT = {
-    "prompt_tokens": ANY_BUT_NONE,
-    "completion_tokens": ANY_BUT_NONE,
-    "total_tokens": ANY_BUT_NONE,
-    "original_usage.total_token_count": ANY_BUT_NONE,
-    "original_usage.candidates_token_count": ANY_BUT_NONE,
-    "original_usage.prompt_token_count": ANY_BUT_NONE,
-}
-
-
-def _is_rate_limit_error(exception: Exception) -> bool:
-    if isinstance(exception, genai_errors.ClientError):
-        return exception.response.status_code == 429
-    return False
-
-
-retry_with_waiting_on_rate_limit_errors = tenacity.retry(
-    stop=tenacity.stop_after_attempt(3),
-    wait=tenacity.wait_incrementing(start=5, increment=5),
-    retry=tenacity.retry_if_exception(_is_rate_limit_error),
+EXPECTED_GOOGLE_USAGE_LOGGED_FORMAT = ANY_DICT.containing(
+    {
+        "prompt_tokens": ANY_BUT_NONE,
+        "completion_tokens": ANY_BUT_NONE,
+        "total_tokens": ANY_BUT_NONE,
+        "original_usage.total_token_count": ANY_BUT_NONE,
+        "original_usage.prompt_token_count": ANY_BUT_NONE,
+    }
 )
 
 
@@ -59,7 +46,6 @@ def _assert_metadata_contains_required_keys(metadata: Dict[str, Any]):
     assert_dict_has_keys(metadata, REQUIRED_METADATA_KEYS)
 
 
-@retry_with_waiting_on_rate_limit_errors
 @pytest.mark.parametrize(
     "project_name, expected_project_name",
     [
@@ -114,8 +100,10 @@ def test_genai_client__generate_content__happyflow(
                 spans=[],
                 model=ANY_STRING.starting_with(MODEL),
                 provider="google_vertexai",
+                source="sdk",
             )
         ],
+        source="sdk",
     )
 
     assert len(fake_backend.trace_trees) == 1
@@ -127,7 +115,6 @@ def test_genai_client__generate_content__happyflow(
     _assert_metadata_contains_required_keys(llm_span_metadata)
 
 
-@retry_with_waiting_on_rate_limit_errors
 def test_genai_client__async_generate_content__happyflow(fake_backend):
     client = genai.Client(
         vertexai=True,
@@ -168,8 +155,10 @@ def test_genai_client__async_generate_content__happyflow(fake_backend):
                 spans=[],
                 model=ANY_STRING.starting_with(MODEL),
                 provider="google_vertexai",
+                source="sdk",
             )
         ],
+        source="sdk",
     )
 
     assert len(fake_backend.trace_trees) == 1
@@ -181,7 +170,72 @@ def test_genai_client__async_generate_content__happyflow(fake_backend):
     _assert_metadata_contains_required_keys(llm_span_metadata)
 
 
-@retry_with_waiting_on_rate_limit_errors
+@pytest.mark.asyncio
+async def test_genai_client__async_generate_content__opik_args__happyflow(fake_backend):
+    client = genai.Client(
+        vertexai=True,
+        http_options=HttpOptions(api_version="v1"),
+    )
+    client = track_genai(client)
+
+    args_dict = {
+        "span": {"tags": ["span_tag"], "metadata": {"span_key": "span_value"}},
+        "trace": {
+            "thread_id": "conversation-2",
+            "tags": ["trace_tag"],
+            "metadata": {"trace_key": "trace_value"},
+        },
+    }
+
+    _ = await client.aio.models.generate_content(
+        model=MODEL,
+        contents="What is the capital of Belarus?",
+        opik_args=args_dict,
+    )
+
+    opik.flush_tracker()
+
+    EXPECTED_TRACE_TREE = TraceModel(
+        id=ANY_BUT_NONE,
+        name=ANY_STRING.starting_with(f"async_generate_content: {MODEL}"),
+        input={"contents": "What is the capital of Belarus?"},
+        output={"candidates": ANY_LIST},
+        tags=["genai", "span_tag", "trace_tag"],
+        metadata=ANY_DICT.containing({"trace_key": "trace_value"}),
+        start_time=ANY_BUT_NONE,
+        end_time=ANY_BUT_NONE,
+        last_updated_at=ANY_BUT_NONE,
+        thread_id="conversation-2",
+        spans=[
+            SpanModel(
+                id=ANY_BUT_NONE,
+                type="llm",
+                name=ANY_STRING.starting_with(f"async_generate_content: {MODEL}"),
+                input={"contents": "What is the capital of Belarus?"},
+                output={"candidates": ANY_LIST},
+                tags=["genai", "span_tag"],
+                metadata=ANY_DICT.containing({"span_key": "span_value"}),
+                start_time=ANY_BUT_NONE,
+                end_time=ANY_BUT_NONE,
+                usage=EXPECTED_GOOGLE_USAGE_LOGGED_FORMAT,
+                spans=[],
+                model=ANY_STRING.starting_with(MODEL),
+                provider="google_vertexai",
+                source="sdk",
+            )
+        ],
+        source="sdk",
+    )
+
+    assert len(fake_backend.trace_trees) == 1
+    trace_tree = fake_backend.trace_trees[0]
+
+    assert_equal(EXPECTED_TRACE_TREE, trace_tree)
+
+    llm_span_metadata = trace_tree.spans[0].metadata
+    _assert_metadata_contains_required_keys(llm_span_metadata)
+
+
 @pytest.mark.parametrize(
     "project_name, expected_project_name",
     [
@@ -240,10 +294,13 @@ def test_genai_client__generate_content_called_inside_another_tracked_function__
                         spans=[],
                         model=ANY_STRING.starting_with(MODEL),
                         provider="google_vertexai",
+                        source="sdk",
                     )
                 ],
+                source="sdk",
             )
         ],
+        source="sdk",
     )
 
     assert len(fake_backend.trace_trees) == 1
@@ -255,7 +312,6 @@ def test_genai_client__generate_content_called_inside_another_tracked_function__
     _assert_metadata_contains_required_keys(llm_span_metadata)
 
 
-@retry_with_waiting_on_rate_limit_errors
 def test_genai_client__async_generate_content_called_inside_another_tracked_function__happyflow(
     fake_backend,
 ):
@@ -306,10 +362,13 @@ def test_genai_client__async_generate_content_called_inside_another_tracked_func
                         spans=[],
                         model=ANY_STRING.starting_with(MODEL),
                         provider="google_vertexai",
+                        source="sdk",
                     )
                 ],
+                source="sdk",
             )
         ],
+        source="sdk",
     )
 
     assert len(fake_backend.trace_trees) == 1
@@ -321,7 +380,6 @@ def test_genai_client__async_generate_content_called_inside_another_tracked_func
     _assert_metadata_contains_required_keys(llm_span_metadata)
 
 
-@retry_with_waiting_on_rate_limit_errors
 def test_genai_client__generate_content_stream__happyflow(fake_backend):
     client = genai.Client(
         vertexai=True,
@@ -365,8 +423,10 @@ def test_genai_client__generate_content_stream__happyflow(fake_backend):
                 spans=[],
                 model=ANY_STRING.starting_with(MODEL),
                 provider="google_vertexai",
+                source="sdk",
             )
         ],
+        source="sdk",
     )
 
     assert len(fake_backend.trace_trees) == 1
@@ -378,7 +438,6 @@ def test_genai_client__generate_content_stream__happyflow(fake_backend):
     _assert_metadata_contains_required_keys(llm_span_metadata)
 
 
-@retry_with_waiting_on_rate_limit_errors
 def test_genai_client__async_generate_content_stream__happyflow(fake_backend):
     client = genai.Client(
         vertexai=True,
@@ -424,8 +483,10 @@ def test_genai_client__async_generate_content_stream__happyflow(fake_backend):
                 spans=[],
                 model=ANY_STRING.starting_with(MODEL),
                 provider="google_vertexai",
+                source="sdk",
             )
         ],
+        source="sdk",
     )
 
     assert len(fake_backend.trace_trees) == 1
@@ -437,7 +498,6 @@ def test_genai_client__async_generate_content_stream__happyflow(fake_backend):
     _assert_metadata_contains_required_keys(llm_span_metadata)
 
 
-@retry_with_waiting_on_rate_limit_errors
 def test_genai_client__generate_content_stream_called_inside_another_tracked_function__generations_started_after_the_parent_span_closed__llm_span_attached_to_a_parent_function_span(
     fake_backend,
 ):
@@ -494,10 +554,13 @@ def test_genai_client__generate_content_stream_called_inside_another_tracked_fun
                         spans=[],
                         model=ANY_STRING.starting_with(MODEL),
                         provider="google_vertexai",
+                        source="sdk",
                     )
                 ],
+                source="sdk",
             )
         ],
+        source="sdk",
     )
 
     assert len(fake_backend.trace_trees) == 1
@@ -509,7 +572,6 @@ def test_genai_client__generate_content_stream_called_inside_another_tracked_fun
     _assert_metadata_contains_required_keys(llm_span_metadata)
 
 
-@retry_with_waiting_on_rate_limit_errors
 def test_genai_client__async_generate_content_stream_called_inside_another_tracked_function__generations_started_after_the_parent_span_closed__llm_span_has_a_separate_trace(
     fake_backend,
 ):
@@ -569,10 +631,13 @@ def test_genai_client__async_generate_content_stream_called_inside_another_track
                         spans=[],
                         model=ANY_STRING.starting_with(MODEL),
                         provider="google_vertexai",
+                        source="sdk",
                     )
                 ],
+                source="sdk",
             )
         ],
+        source="sdk",
     )
 
     assert len(fake_backend.trace_trees) == 1
@@ -582,3 +647,145 @@ def test_genai_client__async_generate_content_stream_called_inside_another_track
 
     llm_span_metadata = trace_tree.spans[0].spans[0].metadata
     _assert_metadata_contains_required_keys(llm_span_metadata)
+
+
+@pytest.mark.parametrize(
+    "project_name, expected_project_name",
+    [
+        (None, OPIK_PROJECT_DEFAULT_NAME),
+        ("genai-integration-test", "genai-integration-test"),
+    ],
+)
+def test_genai_client__generate_content__opik_args__happyflow(
+    fake_backend, project_name, expected_project_name
+):
+    # test that opik_args are passed to the logged traces and spans
+    client = genai.Client(
+        vertexai=True,
+        http_options=HttpOptions(api_version="v1"),
+    )
+    client = track_genai(client, project_name=project_name)
+
+    args_dict = {
+        "span": {"tags": ["span_tag"], "metadata": {"span_key": "span_value"}},
+        "trace": {
+            "thread_id": "conversation-2",
+            "tags": ["trace_tag"],
+            "metadata": {"trace_key": "trace_value"},
+        },
+    }
+
+    client.models.generate_content(
+        model=MODEL,
+        contents="What is the capital of Belarus?",
+        config=GenerateContentConfig(max_output_tokens=10),
+        opik_args=args_dict,
+    )
+
+    opik.flush_tracker()
+
+    EXPECTED_TRACE_TREE = TraceModel(
+        id=ANY_BUT_NONE,
+        name=ANY_STRING.starting_with(f"generate_content: {MODEL}"),
+        input={"contents": "What is the capital of Belarus?", "config": ANY_BUT_NONE},
+        output={"candidates": ANY_LIST},
+        tags=["genai", "span_tag", "trace_tag"],
+        metadata=ANY_DICT.containing({"trace_key": "trace_value"}),
+        start_time=ANY_BUT_NONE,
+        end_time=ANY_BUT_NONE,
+        last_updated_at=ANY_BUT_NONE,
+        project_name=expected_project_name,
+        thread_id="conversation-2",
+        spans=[
+            SpanModel(
+                id=ANY_BUT_NONE,
+                type="llm",
+                name=ANY_STRING.starting_with(f"generate_content: {MODEL}"),
+                input={
+                    "contents": "What is the capital of Belarus?",
+                    "config": ANY_BUT_NONE,
+                },
+                output={"candidates": ANY_LIST},
+                tags=["genai", "span_tag"],
+                metadata=ANY_DICT.containing({"span_key": "span_value"}),
+                start_time=ANY_BUT_NONE,
+                end_time=ANY_BUT_NONE,
+                usage=EXPECTED_GOOGLE_USAGE_LOGGED_FORMAT,
+                project_name=expected_project_name,
+                spans=[],
+                model=ANY_STRING.starting_with(MODEL),
+                provider="google_vertexai",
+                source="sdk",
+            )
+        ],
+        source="sdk",
+    )
+
+    assert len(fake_backend.trace_trees) == 1
+    trace_tree = fake_backend.trace_trees[0]
+
+    assert_equal(EXPECTED_TRACE_TREE, trace_tree)
+
+    llm_span_metadata = trace_tree.spans[0].metadata
+    _assert_metadata_contains_required_keys(llm_span_metadata)
+
+
+def test_genai_client__generate_content__cost_callback__sets_span_total_cost(
+    fake_backend,
+):
+    CUSTOM_COST = 0.042
+
+    def cost_callback(output):
+        return CUSTOM_COST
+
+    client = genai.Client(
+        vertexai=True,
+        http_options=HttpOptions(api_version="v1"),
+    )
+    client = track_genai(client, cost_callback=cost_callback)
+
+    client.models.generate_content(
+        model=MODEL,
+        contents="What is the capital of Belarus?",
+        config=GenerateContentConfig(max_output_tokens=10),
+    )
+
+    opik.flush_tracker()
+
+    EXPECTED_TRACE_TREE = TraceModel(
+        id=ANY_BUT_NONE,
+        name=ANY_STRING.starting_with(f"generate_content: {MODEL}"),
+        input={"contents": "What is the capital of Belarus?", "config": ANY_BUT_NONE},
+        output={"candidates": ANY_LIST},
+        tags=["genai"],
+        metadata=ANY_DICT,
+        start_time=ANY_BUT_NONE,
+        end_time=ANY_BUT_NONE,
+        last_updated_at=ANY_BUT_NONE,
+        spans=[
+            SpanModel(
+                id=ANY_BUT_NONE,
+                type="llm",
+                name=ANY_STRING.starting_with(f"generate_content: {MODEL}"),
+                input={
+                    "contents": "What is the capital of Belarus?",
+                    "config": ANY_BUT_NONE,
+                },
+                output={"candidates": ANY_LIST},
+                tags=["genai"],
+                metadata=ANY_DICT,
+                start_time=ANY_BUT_NONE,
+                end_time=ANY_BUT_NONE,
+                usage=EXPECTED_GOOGLE_USAGE_LOGGED_FORMAT,
+                spans=[],
+                model=ANY_STRING.starting_with(MODEL),
+                provider="google_vertexai",
+                total_cost=CUSTOM_COST,
+                source="sdk",
+            )
+        ],
+        source="sdk",
+    )
+
+    assert len(fake_backend.trace_trees) == 1
+    assert_equal(EXPECTED_TRACE_TREE, fake_backend.trace_trees[0])

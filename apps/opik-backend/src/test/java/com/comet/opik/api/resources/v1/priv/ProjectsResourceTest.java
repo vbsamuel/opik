@@ -1,6 +1,5 @@
 package com.comet.opik.api.resources.v1.priv;
 
-import com.comet.opik.TestComparators;
 import com.comet.opik.api.BatchDelete;
 import com.comet.opik.api.ErrorCountWithDeviation;
 import com.comet.opik.api.ErrorInfo;
@@ -9,15 +8,21 @@ import com.comet.opik.api.FeedbackScoreAverage;
 import com.comet.opik.api.GuardrailsValidation;
 import com.comet.opik.api.PercentageValues;
 import com.comet.opik.api.Project;
+import com.comet.opik.api.ProjectIdLastUpdated;
 import com.comet.opik.api.ProjectRetrieve;
 import com.comet.opik.api.ProjectStatsSummary;
 import com.comet.opik.api.ProjectUpdate;
 import com.comet.opik.api.ReactServiceErrorResponse;
+import com.comet.opik.api.Source;
 import com.comet.opik.api.Span;
 import com.comet.opik.api.Trace;
 import com.comet.opik.api.TraceUpdate;
 import com.comet.opik.api.Visibility;
 import com.comet.opik.api.error.ErrorMessage;
+import com.comet.opik.api.filter.Operator;
+import com.comet.opik.api.filter.TraceField;
+import com.comet.opik.api.filter.TraceFilter;
+import com.comet.opik.api.metrics.KpiCardRequest;
 import com.comet.opik.api.resources.utils.AuthTestUtils;
 import com.comet.opik.api.resources.utils.BigDecimalCollectors;
 import com.comet.opik.api.resources.utils.ClickHouseContainerUtils;
@@ -36,16 +41,25 @@ import com.comet.opik.api.resources.utils.resources.GuardrailsResourceClient;
 import com.comet.opik.api.resources.utils.resources.ProjectResourceClient;
 import com.comet.opik.api.resources.utils.resources.SpanResourceClient;
 import com.comet.opik.api.resources.utils.resources.TraceResourceClient;
+import com.comet.opik.api.resources.utils.traces.TraceDBUtils;
 import com.comet.opik.api.sorting.Direction;
 import com.comet.opik.api.sorting.SortableFields;
-import com.comet.opik.api.sorting.SortingFactory;
 import com.comet.opik.api.sorting.SortingField;
+import com.comet.opik.domain.DemoData;
+import com.comet.opik.domain.EntityType;
+import com.comet.opik.domain.FeedbackScoreDAO;
 import com.comet.opik.domain.GuardrailResult;
 import com.comet.opik.domain.GuardrailsMapper;
+import com.comet.opik.domain.IdGenerator;
 import com.comet.opik.domain.ProjectService;
+import com.comet.opik.domain.TestIdGeneratorFactory;
+import com.comet.opik.domain.retention.RetentionUtils;
 import com.comet.opik.extensions.DropwizardAppExtensionProvider;
 import com.comet.opik.extensions.RegisterApp;
 import com.comet.opik.infrastructure.DatabaseAnalyticsFactory;
+import com.comet.opik.infrastructure.auth.RequestContext;
+import com.comet.opik.infrastructure.auth.WorkspaceUserPermission;
+import com.comet.opik.infrastructure.db.TransactionTemplateAsync;
 import com.comet.opik.podam.PodamFactoryUtils;
 import com.comet.opik.utils.JsonUtils;
 import com.comet.opik.utils.ValidationUtils;
@@ -58,6 +72,7 @@ import jakarta.ws.rs.core.HttpHeaders;
 import jakarta.ws.rs.core.MediaType;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.apache.http.HttpStatus;
+import org.awaitility.Awaitility;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -73,9 +88,8 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.testcontainers.clickhouse.ClickHouseContainer;
 import org.testcontainers.containers.GenericContainer;
-import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.lifecycle.Startables;
-import org.testcontainers.shaded.org.awaitility.Awaitility;
+import org.testcontainers.mysql.MySQLContainer;
 import ru.vyarus.dropwizard.guice.test.ClientSupport;
 import ru.vyarus.dropwizard.guice.test.jupiter.ext.TestDropwizardAppExtension;
 import uk.co.jemos.podam.api.PodamFactory;
@@ -119,12 +133,13 @@ import static com.github.tomakehurst.wiremock.client.WireMock.matching;
 import static com.github.tomakehurst.wiremock.client.WireMock.matchingJsonPath;
 import static com.github.tomakehurst.wiremock.client.WireMock.okJson;
 import static com.github.tomakehurst.wiremock.client.WireMock.post;
+import static com.github.tomakehurst.wiremock.client.WireMock.postRequestedFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo;
-import static java.util.UUID.randomUUID;
 import static java.util.stream.Collectors.averagingDouble;
 import static java.util.stream.Collectors.groupingBy;
 import static java.util.stream.Collectors.toMap;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.within;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -137,9 +152,9 @@ class ProjectsResourceTest {
     public static final String URL_TEMPLATE_TRACE = "%s/v1/private/traces";
     public static final String[] IGNORED_FIELDS = {"createdBy", "lastUpdatedBy", "createdAt", "lastUpdatedAt",
             "lastUpdatedTraceAt", "feedbackScores", "duration", "totalEstimatedCost", "totalEstimatedCostSum", "usage",
-            "traceCount", "guardrailsFailedCount", "errorCount"};
+            "traceCount", "threadCount", "guardrailsFailedCount", "errorCount"};
     public static final String[] IGNORED_FIELD_MIN = {"createdBy", "lastUpdatedBy", "createdAt", "lastUpdatedAt",
-            "lastUpdatedTraceAt"};
+            "lastUpdatedTraceAt", "threadCount"};
 
     private static final String API_KEY = UUID.randomUUID().toString();
     private static final String USER = UUID.randomUUID().toString();
@@ -150,7 +165,7 @@ class ProjectsResourceTest {
     private final GenericContainer<?> ZOOKEEPER_CONTAINER = ClickHouseContainerUtils.newZookeeperContainer();
     private final ClickHouseContainer CLICKHOUSE_CONTAINER = ClickHouseContainerUtils
             .newClickHouseContainer(ZOOKEEPER_CONTAINER);
-    private final MySQLContainer<?> MYSQL = MySQLContainerUtils.newMySQLContainer();
+    private final MySQLContainer MYSQL = MySQLContainerUtils.newMySQLContainer();
     private final WireMockUtils.WireMockRuntime wireMock;
 
     @RegisterApp
@@ -172,6 +187,7 @@ class ProjectsResourceTest {
     }
 
     private final PodamFactory factory = PodamFactoryUtils.newPodamFactory();
+    private static final IdGenerator idGenerator = TestIdGeneratorFactory.create();
 
     private String baseURI;
     private ClientSupport client;
@@ -234,6 +250,121 @@ class ProjectsResourceTest {
             assertThat(actualResponse.getStatusInfo().getStatusCode()).isEqualTo(201);
 
             return TestUtils.getIdFromLocation(actualResponse.getLocation());
+        }
+    }
+
+    @Nested
+    @DisplayName("Required permissions")
+    class RequiredPermissionsTest {
+
+        @Test
+        @DisplayName("Delete project by id passes required permissions to auth endpoint")
+        void deleteProjectByIdPassesRequiredPermissionsToAuthEndpoint() {
+            String apiKey = UUID.randomUUID().toString();
+            String workspaceName = "test-workspace-" + UUID.randomUUID();
+            String workspaceId = UUID.randomUUID().toString();
+            mockTargetWorkspace(apiKey, workspaceName, workspaceId);
+
+            var project = Project.builder().name(factory.manufacturePojo(String.class)).build();
+            var id = createProject(project, apiKey, workspaceName);
+
+            wireMock.server().resetRequests();
+            client.target(URL_TEMPLATE.formatted(baseURI))
+                    .path(id.toString())
+                    .request()
+                    .header(HttpHeaders.AUTHORIZATION, apiKey)
+                    .header(WORKSPACE_HEADER, workspaceName)
+                    .delete()
+                    .close();
+
+            wireMock.server().verify(
+                    postRequestedFor(urlPathEqualTo("/opik/auth"))
+                            .withRequestBody(matchingJsonPath("$.requiredPermissions[0]",
+                                    equalTo(WorkspaceUserPermission.PROJECT_DELETE.getValue()))));
+        }
+
+        @Test
+        @DisplayName("Delete projects batch passes required permissions to auth endpoint")
+        void deleteProjectsBatchPassesRequiredPermissionsToAuthEndpoint() {
+            String apiKey = UUID.randomUUID().toString();
+            String workspaceName = "test-workspace-" + UUID.randomUUID();
+            String workspaceId = UUID.randomUUID().toString();
+            mockTargetWorkspace(apiKey, workspaceName, workspaceId);
+
+            var project = Project.builder().name(factory.manufacturePojo(String.class)).build();
+            var id = createProject(project, apiKey, workspaceName);
+
+            wireMock.server().resetRequests();
+            client.target(URL_TEMPLATE.formatted(baseURI))
+                    .path("delete")
+                    .request()
+                    .header(HttpHeaders.AUTHORIZATION, apiKey)
+                    .header(WORKSPACE_HEADER, workspaceName)
+                    .post(Entity.json(new BatchDelete(Set.of(id))))
+                    .close();
+
+            wireMock.server().verify(
+                    postRequestedFor(urlPathEqualTo("/opik/auth"))
+                            .withRequestBody(matchingJsonPath("$.requiredPermissions[0]",
+                                    equalTo(WorkspaceUserPermission.PROJECT_DELETE.getValue()))));
+        }
+
+        @Test
+        @DisplayName("Create project returns 403 when permission is denied")
+        void createProjectReturnsForbiddenWhenPermissionDenied() {
+            String apiKey = UUID.randomUUID().toString();
+            String workspaceName = "test-workspace-" + UUID.randomUUID();
+
+            AuthTestUtils.mockTargetWorkspaceDenyPermission(wireMock.server(), apiKey, workspaceName,
+                    WorkspaceUserPermission.PROJECT_CREATE.getValue());
+
+            try (var response = projectResourceClient.callCreateProject(
+                    factory.manufacturePojo(Project.class), apiKey, workspaceName)) {
+                assertThat(response.getStatus()).isEqualTo(HttpStatus.SC_FORBIDDEN);
+            }
+        }
+
+        @Test
+        @DisplayName("Find projects falls back to public visibility when PROJECT_DATA_VIEW permission is denied")
+        void findProjectsFallsBackToPublicVisibilityWhenPermissionDenied() {
+            String apiKey = UUID.randomUUID().toString();
+            String workspaceName = "test-workspace-" + UUID.randomUUID();
+            String workspaceId = UUID.randomUUID().toString();
+
+            AuthTestUtils.mockTargetWorkspaceDenyPermission(wireMock.server(), apiKey, workspaceName,
+                    WorkspaceUserPermission.PROJECT_DATA_VIEW.getValue());
+            mockGetWorkspaceIdByName(workspaceName, workspaceId);
+
+            wireMock.server().resetRequests();
+            try (var response = projectResourceClient.callFindProjects(apiKey, workspaceName)) {
+                assertThat(response.getStatus()).isEqualTo(HttpStatus.SC_OK);
+            }
+
+            wireMock.server().verify(
+                    postRequestedFor(urlPathEqualTo("/opik/auth"))
+                            .withRequestBody(matchingJsonPath("$.requiredPermissions[0]",
+                                    equalTo(WorkspaceUserPermission.PROJECT_DATA_VIEW.getValue()))));
+        }
+
+        @Test
+        @DisplayName("Get project KPI cards returns 403 when permission is denied")
+        void getProjectKpiCardsReturnsForbiddenWhenPermissionDenied() {
+            String apiKey = UUID.randomUUID().toString();
+            String workspaceName = "test-workspace-" + UUID.randomUUID();
+
+            AuthTestUtils.mockTargetWorkspaceDenyPermission(wireMock.server(), apiKey, workspaceName,
+                    WorkspaceUserPermission.PROJECT_DATA_VIEW.getValue());
+
+            var request = KpiCardRequest.builder()
+                    .entityType(KpiCardRequest.EntityType.TRACES)
+                    .intervalStart(Instant.now().minus(Duration.ofDays(1)))
+                    .intervalEnd(Instant.now())
+                    .build();
+
+            try (var response = projectResourceClient.getKpiCardsRaw(UUID.randomUUID(), request, apiKey,
+                    workspaceName)) {
+                assertThat(response.getStatus()).isEqualTo(HttpStatus.SC_FORBIDDEN);
+            }
         }
     }
 
@@ -646,7 +777,7 @@ class ProjectsResourceTest {
                     .request()
                     .header(HttpHeaders.AUTHORIZATION, apiKey)
                     .header(WORKSPACE_HEADER, workspaceName)
-                    .post(Entity.json(ProjectRetrieve.builder().name(project.name()).build()))) {
+                    .post(Entity.json(ProjectRetrieve.builder().name(project.name()).includeStats(true).build()))) {
 
                 assertThat(actualResponse.getStatusInfo().getStatusCode()).isEqualTo(HttpStatus.SC_OK);
                 assertThat(actualResponse.hasEntity()).isTrue();
@@ -659,6 +790,56 @@ class ProjectsResourceTest {
                         .withComparatorForType(StatsUtils::bigDecimalComparator, BigDecimal.class)
                         .withComparatorForFields(StatsUtils::closeToEpsilonComparator, "totalEstimatedCost")
                         .isEqualTo(project);
+            }
+        }
+
+        @Test
+        @DisplayName("when project exists and stats are not requested, then return project without stats")
+        void getProjectByName__whenStatsNotRequested__thenReturnProjectWithoutStats() {
+            String workspaceName = UUID.randomUUID().toString();
+            String apiKey = UUID.randomUUID().toString();
+            String workspaceId = UUID.randomUUID().toString();
+
+            mockTargetWorkspace(apiKey, workspaceName, workspaceId);
+
+            var project = factory.manufacturePojo(Project.class);
+
+            var id = createProject(project, apiKey, workspaceName);
+
+            // Seed traces/spans so stats would be non-null if they were computed.
+            buildProjectStats(project.toBuilder().id(id).build(), apiKey, workspaceName);
+
+            // Without stats requested (OPIK-7101), no ClickHouse aggregation runs on the hot name-resolution path:
+            // identity/core fields are resolved while every stats field stays null. lastUpdatedTraceAt is a `projects`
+            // table column (set on ingestion), not part of the stats aggregation, so it is ignored via IGNORED_FIELD_MIN.
+            var expectedProject = project.toBuilder()
+                    .id(id)
+                    .feedbackScores(null)
+                    .duration(null)
+                    .totalEstimatedCost(null)
+                    .totalEstimatedCostSum(null)
+                    .usage(null)
+                    .traceCount(null)
+                    .guardrailsFailedCount(null)
+                    .errorCount(null)
+                    .build();
+
+            try (var actualResponse = client.target(URL_TEMPLATE.formatted(baseURI))
+                    .path("retrieve")
+                    .request()
+                    .header(HttpHeaders.AUTHORIZATION, apiKey)
+                    .header(WORKSPACE_HEADER, workspaceName)
+                    .post(Entity.json(ProjectRetrieve.builder().name(project.name()).build()))) {
+
+                assertThat(actualResponse.getStatusInfo().getStatusCode()).isEqualTo(HttpStatus.SC_OK);
+                assertThat(actualResponse.hasEntity()).isTrue();
+
+                var actualEntity = actualResponse.readEntity(Project.class);
+                assertThat(actualEntity)
+                        .usingRecursiveComparison()
+                        .ignoringFields(IGNORED_FIELD_MIN)
+                        .ignoringCollectionOrder()
+                        .isEqualTo(expectedProject);
             }
         }
 
@@ -693,6 +874,39 @@ class ProjectsResourceTest {
                     arguments(ProjectRetrieve.builder().name(null).build(), "name must not be blank", 422),
                     arguments(ProjectRetrieve.builder().name(UUID.randomUUID().toString()).build(), "Project not found",
                             404));
+        }
+
+        @Test
+        @DisplayName("when retrieving project from another workspace, then return 404")
+        void retrieveProject__whenProjectBelongsToAnotherWorkspace__thenReturn404() {
+            // Set up workspace A with a project
+            String workspaceNameA = UUID.randomUUID().toString();
+            String apiKeyA = UUID.randomUUID().toString();
+            String workspaceIdA = UUID.randomUUID().toString();
+            mockTargetWorkspace(apiKeyA, workspaceNameA, workspaceIdA);
+
+            var project = factory.manufacturePojo(Project.class);
+            createProject(project, apiKeyA, workspaceNameA);
+
+            // Set up workspace B with a different API key
+            String workspaceNameB = UUID.randomUUID().toString();
+            String apiKeyB = UUID.randomUUID().toString();
+            String workspaceIdB = UUID.randomUUID().toString();
+            mockTargetWorkspace(apiKeyB, workspaceNameB, workspaceIdB);
+
+            // Try to retrieve workspace A's project using workspace B's credentials
+            try (var actualResponse = client.target(URL_TEMPLATE.formatted(baseURI))
+                    .path("retrieve")
+                    .request()
+                    .header(HttpHeaders.AUTHORIZATION, apiKeyB)
+                    .header(WORKSPACE_HEADER, workspaceNameB)
+                    .post(Entity.json(ProjectRetrieve.builder().name(project.name()).build()))) {
+
+                assertThat(actualResponse.getStatusInfo().getStatusCode()).isEqualTo(404);
+                assertThat(actualResponse.hasEntity()).isTrue();
+                assertThat(actualResponse.readEntity(ErrorMessage.class).errors())
+                        .contains("Project not found");
+            }
         }
 
     }
@@ -875,8 +1089,8 @@ class ProjectsResourceTest {
         }
 
         @Test
-        @DisplayName("when fetching projects with multiple sorting, then return an error")
-        void getProjects__whenMultipleSorting__thenReturnAnError() {
+        @DisplayName("when fetching projects with multiple sorting, then use first field only")
+        void getProjects__whenMultipleSorting__thenUseFirstFieldOnly() {
             String workspaceName = UUID.randomUUID().toString();
             String apiKey = UUID.randomUUID().toString();
             String workspaceId = UUID.randomUUID().toString();
@@ -900,11 +1114,11 @@ class ProjectsResourceTest {
                     .header(WORKSPACE_HEADER, workspaceName)
                     .get();
 
-            assertThat(actualResponse.getStatusInfo().getStatusCode()).isEqualTo(HttpStatus.SC_BAD_REQUEST);
+            assertThat(actualResponse.getStatusInfo().getStatusCode()).isEqualTo(HttpStatus.SC_OK);
+            assertThat(actualResponse.hasEntity()).isTrue();
 
-            var actualEntity = actualResponse.readEntity(io.dropwizard.jersey.errors.ErrorMessage.class);
-
-            assertThat(actualEntity.getMessage()).isEqualTo(SortingFactory.ERR_MULTIPLE_SORTING);
+            var actualEntity = actualResponse.readEntity(Project.ProjectPage.class);
+            assertThat(actualEntity).isNotNull();
 
         }
 
@@ -1003,8 +1217,8 @@ class ProjectsResourceTest {
 
         @ParameterizedTest
         @MethodSource
-        @DisplayName("sort by non-sortable field should return an error")
-        void getProjects__whenSortingProjectsByNonSortableField__thenReturnAnError(String sortField) {
+        @DisplayName("sort by non-sortable field should ignore and return success")
+        void getProjects__whenSortingProjectsByNonSortableField__thenIgnoreAndReturnSuccess(String sortField) {
             final int NUM_OF_PROJECTS = 5;
             String workspaceName = UUID.randomUUID().toString();
             String apiKey = UUID.randomUUID().toString();
@@ -1025,15 +1239,14 @@ class ProjectsResourceTest {
                     .header(WORKSPACE_HEADER, workspaceName)
                     .get();
 
-            assertThat(actualResponse.getStatusInfo().getStatusCode()).isEqualTo(400);
+            assertThat(actualResponse.getStatusInfo().getStatusCode()).isEqualTo(200);
             assertThat(actualResponse.hasEntity()).isTrue();
 
-            var actualEntity = actualResponse.readEntity(io.dropwizard.jersey.errors.ErrorMessage.class);
-            assertThat(actualEntity.getMessage())
-                    .isEqualTo(SortingFactory.ERR_ILLEGAL_SORTING_FIELDS_TEMPLATE.formatted(sortField));
+            var actualEntity = actualResponse.readEntity(Project.ProjectPage.class);
+            assertThat(actualEntity).isNotNull();
         }
 
-        Stream<Arguments> getProjects__whenSortingProjectsByNonSortableField__thenReturnAnError() {
+        Stream<Arguments> getProjects__whenSortingProjectsByNonSortableField__thenIgnoreAndReturnSuccess() {
             return Stream.of(
                     Arguments.of(Named.of("non-sortable field", "created_by")),
                     Arguments.of(Named.of("non-sortable field", "last_updated_by")),
@@ -1191,12 +1404,12 @@ class ProjectsResourceTest {
             assertThat(actualEntity.content().stream().map(Project::id).toList())
                     .isEqualTo(List.of(id3, id2, id));
 
-            assertThat(actualEntity.content().get(0).lastUpdatedTraceAt())
-                    .isEqualTo(expectedProject3.lastUpdatedTraceAt());
-            assertThat(actualEntity.content().get(1).lastUpdatedTraceAt())
-                    .isEqualTo(expectedProject2.lastUpdatedTraceAt());
-            assertThat(actualEntity.content().get(2).lastUpdatedTraceAt())
-                    .isEqualTo(expectedProject.lastUpdatedTraceAt());
+            assertLastUpdatedTraceAtEquals(actualEntity.content().get(0).lastUpdatedTraceAt(),
+                    expectedProject3.lastUpdatedTraceAt());
+            assertLastUpdatedTraceAtEquals(actualEntity.content().get(1).lastUpdatedTraceAt(),
+                    expectedProject2.lastUpdatedTraceAt());
+            assertLastUpdatedTraceAtEquals(actualEntity.content().get(2).lastUpdatedTraceAt(),
+                    expectedProject.lastUpdatedTraceAt());
 
             assertAllProjectsHavePersistedLastTraceAt(workspaceId, List.of(expectedProject, expectedProject2,
                     expectedProject3));
@@ -1234,6 +1447,61 @@ class ProjectsResourceTest {
                     .withComparatorForType(StatsUtils::bigDecimalComparator, BigDecimal.class)
                     .withComparatorForFields(StatsUtils::closeToEpsilonComparator, "totalEstimatedCost")
                     .isEqualTo(expectedProjectStats);
+        }
+
+        @Test
+        @DisplayName("when the legacy feedback_scores table has rows for the workspace, the project stats UNION surfaces them")
+        void getProjects__whenLegacyScoresHasData__thenStatsIncludeThem(FeedbackScoreDAO feedbackScoreDAO) {
+            String workspaceName = UUID.randomUUID().toString();
+            String apiKey = UUID.randomUUID().toString();
+            String workspaceId = UUID.randomUUID().toString();
+
+            mockTargetWorkspace(apiKey, workspaceName, workspaceId);
+
+            var project = factory.manufacturePojo(Project.class);
+            UUID projectId = createProject(project, apiKey, workspaceName);
+            var seeded = buildProjectStats(project.toBuilder().id(projectId).build(), apiKey, workspaceName);
+
+            // Write directly into the legacy `feedback_scores` table via the author=null DAO
+            // path — the public API always routes to authored_feedback_scores, so this is the
+            // only way to exercise the legacy-UNION branch from a backend test.
+            var traces = traceResourceClient.getTraces(project.name(), null, apiKey, workspaceName, null, null, 1,
+                    Map.of());
+            UUID traceId = traces.content().getFirst().id();
+            var legacyScore = factory.manufacturePojo(FeedbackScore.class).toBuilder()
+                    .name("legacy-" + UUID.randomUUID())
+                    .build();
+            feedbackScoreDAO.scoreEntity(EntityType.TRACE, traceId, legacyScore, projectId, null)
+                    .contextWrite(ctx -> ctx
+                            .put(RequestContext.USER_NAME, USER)
+                            .put(RequestContext.WORKSPACE_ID, workspaceId))
+                    .block();
+
+            var expectedFeedback = new ArrayList<>(seeded.feedbackScores());
+            expectedFeedback.add(FeedbackScoreAverage.builder()
+                    .name(legacyScore.name())
+                    .value(legacyScore.value())
+                    .build());
+            var expected = mapFromProjectToSummary(
+                    seeded.toBuilder().feedbackScores(expectedFeedback).build());
+
+            var actual = client.target(URL_TEMPLATE.formatted(baseURI))
+                    .path("/stats")
+                    .request()
+                    .header(HttpHeaders.AUTHORIZATION, apiKey)
+                    .header(WORKSPACE_HEADER, workspaceName)
+                    .get(ProjectStatsSummary.class)
+                    .content().stream()
+                    .filter(item -> projectId.equals(item.projectId()))
+                    .findFirst()
+                    .orElseThrow();
+
+            assertThat(actual)
+                    .usingRecursiveComparison()
+                    .ignoringCollectionOrder()
+                    .withComparatorForType(StatsUtils::bigDecimalComparator, BigDecimal.class)
+                    .withComparatorForFields(StatsUtils::closeToEpsilonComparator, "totalEstimatedCost")
+                    .isEqualTo(expected);
         }
 
         @Test
@@ -1394,8 +1662,6 @@ class ProjectsResourceTest {
             var latestActualTrace2 = traceResourceClient.getById(traces2.getLast().id(), workspaceName, API_KEY);
             var latestActualTrace3 = traceResourceClient.getById(traces3.getLast().id(), workspaceName, API_KEY);
 
-            var expectedProject1 = project1.toBuilder().id(id1)
-                    .lastUpdatedTraceAt(latestActualTrace1.lastUpdatedAt()).build();
             var expectedProject2 = project2.toBuilder().id(id2)
                     .lastUpdatedTraceAt(latestActualTrace2.lastUpdatedAt()).build();
             var expectedProject3 = project3.toBuilder().id(id3)
@@ -1414,15 +1680,19 @@ class ProjectsResourceTest {
             assertThat(actualEntity.content().stream().map(Project::id).toList())
                     .isEqualTo(List.of(id3, id2, id1));
 
-            assertThat(actualEntity.content().get(0).lastUpdatedTraceAt())
-                    .isEqualTo(expectedProject3.lastUpdatedTraceAt());
-            assertThat(actualEntity.content().get(1).lastUpdatedTraceAt())
-                    .isEqualTo(expectedProject2.lastUpdatedTraceAt());
+            // project3 and project2 carry explicit client timestamps, so the recorded marker matches the stored value
+            // (within the micro-level rounding difference between MySQL and ClickHouse storage).
+            assertLastUpdatedTraceAtEquals(actualEntity.content().get(0).lastUpdatedTraceAt(),
+                    expectedProject3.lastUpdatedTraceAt());
+            assertLastUpdatedTraceAtEquals(actualEntity.content().get(1).lastUpdatedTraceAt(),
+                    expectedProject2.lastUpdatedTraceAt());
+            // project1 left lastUpdatedAt null, so its marker is the event publish time: at or after the stored
+            // value and not in the future.
             assertThat(actualEntity.content().get(2).lastUpdatedTraceAt())
-                    .isEqualTo(expectedProject1.lastUpdatedTraceAt());
+                    .isBetween(latestActualTrace1.lastUpdatedAt(), Instant.now());
 
-            assertAllProjectsHavePersistedLastTraceAt(
-                    workspaceId, List.of(expectedProject1, expectedProject2, expectedProject3));
+            assertAllProjectsHavePersistedLastTraceAt(workspaceId, List.of(expectedProject2, expectedProject3));
+            assertProjectHasLastTraceAtAtLeast(workspaceId, id1, latestActualTrace1.lastUpdatedAt());
         }
 
         @Test
@@ -1448,31 +1718,88 @@ class ProjectsResourceTest {
 
             Trace trace = getTrace(traceId, apiKey, workspaceName);
 
-            Project expectedProject = project.toBuilder().id(projectId).lastUpdatedTraceAt(trace.lastUpdatedAt())
-                    .build();
+            // The update stores a server-generated last_updated_at; the marker is the event time, not the stored value.
+            assertProjectHasLastTraceAtAtLeast(workspaceId, projectId, trace.lastUpdatedAt());
+        }
 
-            assertAllProjectsHavePersistedLastTraceAt(workspaceId, List.of(expectedProject));
+        @Test
+        void recordLastUpdatedTrace__thenOnlyMovesForward() {
+            var projectId = createProject(factory.manufacturePojo(Project.class), API_KEY, TEST_WORKSPACE);
+
+            var base = Instant.now().truncatedTo(ChronoUnit.MICROS);
+            var higher = base.plus(1, ChronoUnit.HOURS);
+            var highest = base.plus(2, ChronoUnit.HOURS);
+
+            recordLastTrace(WORKSPACE_ID, projectId, higher); // null -> set
+            assertThat(findLastTraceAt(WORKSPACE_ID, projectId)).isEqualTo(higher);
+
+            recordLastTrace(WORKSPACE_ID, projectId, base); // older -> not moved backward
+            assertThat(findLastTraceAt(WORKSPACE_ID, projectId)).isEqualTo(higher);
+
+            recordLastTrace(WORKSPACE_ID, projectId, higher); // equal -> held, guard is strict '<'
+            assertThat(findLastTraceAt(WORKSPACE_ID, projectId)).isEqualTo(higher);
+
+            recordLastTrace(WORKSPACE_ID, projectId, highest); // newer -> advances
+            assertThat(findLastTraceAt(WORKSPACE_ID, projectId)).isEqualTo(highest);
+        }
+
+        private void recordLastTrace(String workspaceId, UUID projectId, Instant lastUpdatedAt) {
+            projectService.recordLastUpdatedTrace(workspaceId,
+                    Set.of(ProjectIdLastUpdated.builder().id(projectId).lastUpdatedAt(lastUpdatedAt).build()));
+        }
+
+        private Instant findLastTraceAt(String workspaceId, UUID projectId) {
+            return projectService.findByIds(workspaceId, Set.of(projectId)).stream()
+                    .findFirst().orElseThrow().lastUpdatedTraceAt();
         }
 
         private void assertAllProjectsHavePersistedLastTraceAt(String workspaceId, List<Project> expectedProjects) {
             Awaitility.await().untilAsserted(() -> {
-                List<Project> dbProjects = projectService.findByIds(workspaceId, expectedProjects.stream()
-                        .map(Project::id).collect(Collectors.toUnmodifiableSet()));
-                Map<UUID, Instant> actualLastTraceByProjectId = dbProjects.stream()
+                var expectedLastTraceByProjectId = expectedProjects.stream()
                         .collect(toMap(Project::id, Project::lastUpdatedTraceAt));
-                Map<UUID, Instant> expectedLastTraceByProjectId = expectedProjects.stream()
+                var expectedProjectIds = expectedLastTraceByProjectId.keySet();
+                var actualLastTraceByProjectId = projectService.findByIds(
+                        workspaceId, expectedProjectIds).stream()
                         .collect(toMap(Project::id, Project::lastUpdatedTraceAt));
-
                 assertThat(actualLastTraceByProjectId)
-                        .usingRecursiveComparison()
-                        .withComparatorForType(TestComparators::compareMicroNanoTime, Instant.class)
-                        .isEqualTo(expectedLastTraceByProjectId);
+                        .containsOnlyKeys(expectedProjectIds)
+                        .allSatisfy((projectId, actualLastUpdatedTraceAt) -> assertLastUpdatedTraceAtEquals(
+                                actualLastUpdatedTraceAt, expectedLastTraceByProjectId.get(projectId)));
             });
         }
+
+        /**
+         * Asserts the persisted marker for the server-generated case (trace created with a null timestamp, or
+         * updated), where the marker is the ingestion event time: at or after the stored value and not in the future.
+         */
+        private void assertProjectHasLastTraceAtAtLeast(String workspaceId, UUID projectId, Instant lowerInclusive) {
+            Awaitility.await().untilAsserted(() -> {
+                var actual = projectService.findByIds(workspaceId, Set.of(projectId)).stream()
+                        .findFirst().orElseThrow().lastUpdatedTraceAt();
+                assertThat(actual).isNotNull().isBetween(lowerInclusive, Instant.now());
+            });
+        }
+
     }
 
     private ProjectStatsSummaryItem mapFromProjectToSummary(Project project) {
         return ProjectStatsSummaryItemMapper.INSTANCE.mapFromProject(project);
+    }
+
+    private ProjectStatsSummaryItem mapFromProjectToSummary(Project project, List<Trace> traces) {
+        return ProjectStatsSummaryItemMapper.INSTANCE.mapFromProject(project)
+                .toBuilder()
+                .threadCount(calculateExpectedThreadCount(traces))
+                .build();
+    }
+
+    private long calculateExpectedThreadCount(List<Trace> traces) {
+        return traces.stream()
+                .map(Trace::threadId)
+                .filter(Objects::nonNull)
+                .filter(threadId -> !threadId.isEmpty())
+                .distinct()
+                .count();
     }
 
     private Project buildProjectStats(Project project, String apiKey, String workspaceName) {
@@ -1496,7 +1823,7 @@ class ProjectsResourceTest {
 
         var guardrailsByTraceId = traces.stream()
                 .collect(Collectors.toMap(Trace::id, trace -> guardrailsGenerator.generateGuardrailsForTrace(
-                        trace.id(), randomUUID(), trace.projectName())));
+                        trace.id(), idGenerator.generateId(), trace.projectName())));
         guardrailsByTraceId.values().forEach(guardrail -> guardrailsResourceClient.addBatch(
                 guardrail, apiKey, workspaceName));
 
@@ -1567,6 +1894,7 @@ class ProjectsResourceTest {
                 .feedbackScores(getScoreAverages(traces))
                 .lastUpdatedTraceAt(traces.stream().map(Trace::lastUpdatedAt).max(Instant::compareTo).orElse(null))
                 .traceCount((long) traces.size())
+                .threadCount(calculateExpectedThreadCount(traces))
                 .guardrailsFailedCount(traces.stream()
                         .map(Trace::guardrailsValidations)
                         .filter(Objects::nonNull)
@@ -1580,20 +1908,30 @@ class ProjectsResourceTest {
     }
 
     private ErrorCountWithDeviation getErrorCountWithDeviation(List<Trace> traces, Instant projectCreatedAt) {
-        Instant lastWeek = projectCreatedAt.minus(7, ChronoUnit.DAYS);
+        // Use Instant.now() to match production query behavior which uses now() in ClickHouse
+        // The test determinism comes from the trace UUID timestamps, not from the boundary calculation
+        Instant now = Instant.now();
+        Instant lastWeekStart = now.minus(7, ChronoUnit.DAYS).truncatedTo(ChronoUnit.DAYS);
         long recentErrorCount = traces.stream()
                 .filter(trace -> trace.errorInfo() != null)
-                .filter(trace -> trace.startTime().isAfter(lastWeek) || trace.startTime().equals(lastWeek))
+                .filter(trace -> {
+                    Instant traceTime = RetentionUtils.extractInstant(trace.id());
+                    return !traceTime.isBefore(lastWeekStart) && !traceTime.isAfter(now);
+                })
                 .count();
 
         long pastPeriodErrorCount = traces.stream()
                 .filter(trace -> trace.errorInfo() != null)
-                .filter(trace -> trace.startTime().isBefore(lastWeek))
+                .filter(trace -> {
+                    Instant traceTime = RetentionUtils.extractInstant(trace.id());
+                    return traceTime.isBefore(lastWeekStart);
+                })
                 .count();
 
         long errorCount = recentErrorCount + pastPeriodErrorCount;
         Long deviationPercentage = pastPeriodErrorCount > 0
-                ? Long.valueOf(Math.round(((errorCount - pastPeriodErrorCount) / pastPeriodErrorCount) * 100))
+                ? Long.valueOf(
+                        Math.round(((recentErrorCount - pastPeriodErrorCount) / (double) pastPeriodErrorCount) * 100))
                 : null;
 
         return ErrorCountWithDeviation.builder()
@@ -1746,16 +2084,16 @@ class ProjectsResourceTest {
                     recentErrorCount,
                     pastPeriodErrorCount);
 
-            // Create expected project with error count
-            List<ProjectStatsSummaryItem> expectedProjectsSummary = Stream.of(
-                    createProjectSummary(project.toBuilder().id(projectId).build(), tracesWithSpecificErrors))
-                    .map(ProjectsResourceTest.this::mapFromProjectToSummary)
-                    .toList();
+            // Create expected project with error count and thread count
+            List<ProjectStatsSummaryItem> expectedProjectsSummary = List.of(
+                    mapFromProjectToSummary(
+                            createProjectSummary(project.toBuilder().id(projectId).build(), tracesWithSpecificErrors),
+                            tracesWithSpecificErrors));
 
             var actualProjectsSummary = projectResourceClient.getProjectStatsSummary(project.name(), apiKey,
                     workspaceName);
 
-            // Verify error count using recursive comparison
+            // Verify error count and thread count using recursive comparison
             assertSummaryResponse(actualProjectsSummary, expectedProjectsSummary);
         }
 
@@ -1779,16 +2117,16 @@ class ProjectsResourceTest {
                     recentErrorCount,
                     pastPeriodErrorCount);
 
-            // Create expected project with error count
-            List<ProjectStatsSummaryItem> expectedProjectsSummary = Stream.of(
-                    createProjectSummary(project.toBuilder().id(projectId).build(), tracesWithSpecificErrors))
-                    .map(ProjectsResourceTest.this::mapFromProjectToSummary)
-                    .toList();
+            // Create expected project with error count and thread count
+            List<ProjectStatsSummaryItem> expectedProjectsSummary = List.of(
+                    mapFromProjectToSummary(
+                            createProjectSummary(project.toBuilder().id(projectId).build(), tracesWithSpecificErrors),
+                            tracesWithSpecificErrors));
 
             var actualProjectsSummary = projectResourceClient.getProjectStatsSummary(project.name(), apiKey,
                     workspaceName);
 
-            // Verify error count using recursive comparison
+            // Verify error count and thread count using recursive comparison
             assertSummaryResponse(actualProjectsSummary, expectedProjectsSummary);
         }
 
@@ -1808,16 +2146,16 @@ class ProjectsResourceTest {
             // Create traces without errors
             List<Trace> tracesWithNoErrors = createTracesWithoutErrors(project.name(), workspaceName, apiKey);
 
-            // Create expected project with error count of zero
-            List<ProjectStatsSummaryItem> expectedProjectsSummary = Stream.of(
-                    createProjectSummary(project.toBuilder().id(projectId).build(), tracesWithNoErrors))
-                    .map(ProjectsResourceTest.this::mapFromProjectToSummary)
-                    .toList();
+            // Create expected project with error count of zero and thread count
+            List<ProjectStatsSummaryItem> expectedProjectsSummary = List.of(
+                    mapFromProjectToSummary(
+                            createProjectSummary(project.toBuilder().id(projectId).build(), tracesWithNoErrors),
+                            tracesWithNoErrors));
 
             var actualProjectsSummary = projectResourceClient.getProjectStatsSummary(project.name(), apiKey,
                     workspaceName);
 
-            // Error count might be null or have count = 0
+            // Error count might be null or have count = 0, also verify thread count
             assertSummaryResponse(actualProjectsSummary, expectedProjectsSummary);
         }
 
@@ -1847,22 +2185,270 @@ class ProjectsResourceTest {
             int recentErrorCount2 = PodamUtils.getIntegerInRange(1, 5);
             int pastPeriodErrorCount = 0;
 
-            List<ProjectStatsSummaryItem> expectedProjectsSummary = Stream.of(
-                    createProjectSummary(project1.toBuilder().id(projectId1).build(),
-                            createTracesWithSpecificErrors(project1.name(), workspaceName, apiKey, recentErrorCount1,
-                                    pastPeriodErrorCount1)),
-                    createProjectSummary(project2.toBuilder().id(projectId2).build(),
-                            createTracesWithSpecificErrors(project2.name(), workspaceName, apiKey, recentErrorCount2,
-                                    pastPeriodErrorCount)),
-                    createProjectSummary(project3.toBuilder().id(projectId3).build(),
-                            createTracesWithoutErrors(project3.name(), workspaceName, apiKey)))
-                    .map(ProjectsResourceTest.this::mapFromProjectToSummary)
-                    .toList();
+            // Create traces for each project
+            List<Trace> traces1 = createTracesWithSpecificErrors(project1.name(), workspaceName, apiKey,
+                    recentErrorCount1, pastPeriodErrorCount1);
+            List<Trace> traces2 = createTracesWithSpecificErrors(project2.name(), workspaceName, apiKey,
+                    recentErrorCount2, pastPeriodErrorCount);
+            List<Trace> traces3 = createTracesWithoutErrors(project3.name(), workspaceName, apiKey);
+
+            List<ProjectStatsSummaryItem> expectedProjectsSummary = List.of(
+                    mapFromProjectToSummary(
+                            createProjectSummary(project1.toBuilder().id(projectId1).build(), traces1), traces1),
+                    mapFromProjectToSummary(
+                            createProjectSummary(project2.toBuilder().id(projectId2).build(), traces2), traces2),
+                    mapFromProjectToSummary(
+                            createProjectSummary(project3.toBuilder().id(projectId3).build(), traces3), traces3));
 
             var actualProjectsSummary = projectResourceClient.getProjectStatsSummary(null, apiKey, workspaceName);
 
-            // Error count might be null or have count = 0
+            // Error count might be null or have count = 0, also verify thread count
             assertSummaryResponse(actualProjectsSummary, expectedProjectsSummary.reversed());
+        }
+
+        @Test
+        @DisplayName("when source filter is applied, then exclude non-SDK traces from stats")
+        void getProjectStats__whenSourceFilterApplied__thenExcludeNonSdkTraces() {
+            String workspaceName = UUID.randomUUID().toString();
+            String apiKey = UUID.randomUUID().toString();
+            String workspaceId = UUID.randomUUID().toString();
+
+            mockTargetWorkspace(apiKey, workspaceName, workspaceId);
+
+            Project project = factory.manufacturePojo(Project.class);
+            UUID projectId = createProject(project, apiKey, workspaceName);
+
+            Instant startTime = Instant.now();
+            Trace sdkTrace = factory.manufacturePojo(Trace.class).toBuilder()
+                    .projectName(project.name())
+                    .source(Source.SDK)
+                    .startTime(startTime)
+                    .endTime(startTime.plusSeconds(1))
+                    .errorInfo(null)
+                    .usage(null)
+                    .guardrailsValidations(null)
+                    .feedbackScores(null)
+                    .totalEstimatedCost(null)
+                    .build();
+
+            Trace experimentTrace = factory.manufacturePojo(Trace.class).toBuilder()
+                    .projectName(project.name())
+                    .source(Source.EXPERIMENT)
+                    .startTime(startTime)
+                    .endTime(startTime.plusSeconds(1))
+                    .errorInfo(null)
+                    .usage(null)
+                    .guardrailsValidations(null)
+                    .feedbackScores(null)
+                    .totalEstimatedCost(null)
+                    .build();
+
+            Trace playgroundTrace = factory.manufacturePojo(Trace.class).toBuilder()
+                    .projectName(project.name())
+                    .source(Source.PLAYGROUND)
+                    .startTime(startTime)
+                    .endTime(startTime.plusSeconds(1))
+                    .errorInfo(null)
+                    .usage(null)
+                    .guardrailsValidations(null)
+                    .feedbackScores(null)
+                    .totalEstimatedCost(null)
+                    .build();
+
+            traceResourceClient.batchCreateTraces(List.of(sdkTrace, experimentTrace, playgroundTrace), apiKey,
+                    workspaceName);
+
+            var sourceFilter = new TraceFilter(TraceField.SOURCE, Operator.EQUAL, null, Source.SDK.getValue());
+
+            List<ProjectStatsSummaryItem> expectedProjectsSummary = List.of(
+                    mapFromProjectToSummary(
+                            createProjectSummary(project.toBuilder().id(projectId).build(), List.of(sdkTrace)),
+                            List.of(sdkTrace)));
+
+            var actualProjectsSummary = projectResourceClient.getProjectStatsSummary(project.name(), apiKey,
+                    workspaceName, List.of(sourceFilter));
+
+            assertSummaryResponse(actualProjectsSummary, expectedProjectsSummary);
+        }
+
+        @Test
+        @DisplayName("when a time window is requested, then traces outside either bound are excluded")
+        void getProjectStats__whenWindowRequested__thenExcludesOutOfWindowTraces() {
+            String workspaceName = UUID.randomUUID().toString();
+            String apiKey = UUID.randomUUID().toString();
+            String workspaceId = UUID.randomUUID().toString();
+            mockTargetWorkspace(apiKey, workspaceName, workspaceId);
+
+            Project project = factory.manufacturePojo(Project.class);
+            UUID projectId = createProject(project, apiKey, workspaceName);
+
+            Instant now = Instant.now();
+            Instant fromTime = now.minus(2, ChronoUnit.HOURS);
+            Instant toTime = now;
+            List<Trace> traces = List.of(
+                    traceWithId(project.name(), now.minus(3, ChronoUnit.HOURS)),
+                    traceWithId(project.name(), now.minus(1, ChronoUnit.HOURS)),
+                    traceWithId(project.name(), now.plus(3, ChronoUnit.HOURS)));
+            traceResourceClient.batchCreateTraces(traces, apiKey, workspaceName);
+
+            ProjectStatsSummaryItem item = projectResourceClient
+                    .getProjectStatsSummary(project.name(), apiKey, workspaceName, null, fromTime, toTime)
+                    .content().stream()
+                    .filter(i -> projectId.equals(i.projectId()))
+                    .findFirst()
+                    .orElseThrow();
+
+            assertThat(item.traceCount()).isEqualTo(1L);
+        }
+
+        @Test
+        @DisplayName("when a window covers the data, then every metric column matches the all-time result")
+        void getProjectStats__whenWindowCoversData__thenAllColumnsMatchAllTime() {
+            String workspaceName = UUID.randomUUID().toString();
+            String apiKey = UUID.randomUUID().toString();
+            String workspaceId = UUID.randomUUID().toString();
+            mockTargetWorkspace(apiKey, workspaceName, workspaceId);
+
+            Project project = factory.manufacturePojo(Project.class);
+            UUID projectId = createProject(project, apiKey, workspaceName);
+
+            Instant now = Instant.now();
+            Instant traceInstant = now.minus(60, ChronoUnit.MINUTES);
+
+            // Traces get controlled in-window ids. Spans deliberately get near-now ids that fall OUTSIDE the
+            // window below — so if span feedback scores were scoped by the span's own id instead of its
+            // trace's time, they would drop out and this comparison would fail.
+            List<Trace> traces = PodamFactoryUtils.manufacturePojoList(factory, Trace.class).stream()
+                    .map(trace -> {
+                        Instant start = now.minus(30, ChronoUnit.MINUTES);
+                        Instant end = start.plusMillis(PodamUtils.getIntegerInRange(1, 1000));
+                        return trace.toBuilder()
+                                .projectName(project.name())
+                                .id(idGenerator.generateId(traceInstant))
+                                .startTime(start)
+                                .endTime(end)
+                                .duration(DurationUtils.getDurationInMillisWithSubMilliPrecision(start, end))
+                                .build();
+                    })
+                    .toList();
+            traceResourceClient.batchCreateTraces(traces, apiKey, workspaceName);
+
+            traces.forEach(trace -> guardrailsResourceClient.addBatch(
+                    guardrailsGenerator.generateGuardrailsForTrace(trace.id(), idGenerator.generateId(),
+                            trace.projectName()),
+                    apiKey, workspaceName));
+
+            traces.forEach(trace -> {
+                List<Span> spans = PodamFactoryUtils.manufacturePojoList(factory, Span.class).stream()
+                        .map(span -> span.toBuilder()
+                                .id(idGenerator.generateId(now))
+                                .usage(spanResourceClient.getTokenUsage())
+                                .model(spanResourceClient.randomModel().toString())
+                                .provider(spanResourceClient.provider())
+                                .traceId(trace.id())
+                                .projectName(trace.projectName())
+                                .totalEstimatedCost(null)
+                                .build())
+                        .toList();
+                spanResourceClient.batchCreateSpans(spans, apiKey, workspaceName);
+
+                List<FeedbackScoreBatchItem> manufactured = PodamFactoryUtils.manufacturePojoList(factory,
+                        FeedbackScoreBatchItem.class);
+                List<FeedbackScoreBatchItem> traceScores = manufactured.stream()
+                        .map(score -> score.toBuilder()
+                                .projectId(projectId).projectName(project.name()).id(trace.id()).build())
+                        .collect(Collectors.toList());
+                traceResourceClient.feedbackScores(traceScores, apiKey, workspaceName);
+
+                List<FeedbackScoreBatchItem> spanScores = spans.stream()
+                        .map(span -> {
+                            FeedbackScoreBatchItem item = factory.manufacturePojo(FeedbackScoreBatchItem.class);
+                            return item.toBuilder()
+                                    .projectId(projectId).projectName(project.name()).id(span.id()).build();
+                        })
+                        .collect(Collectors.toList());
+                spanResourceClient.feedbackScores(spanScores, apiKey, workspaceName);
+            });
+
+            var allTime = projectResourceClient.getProjectStatsSummary(project.name(), apiKey, workspaceName);
+            var windowed = projectResourceClient.getProjectStatsSummary(project.name(), apiKey, workspaceName, null,
+                    now.minus(90, ChronoUnit.MINUTES), now.minus(20, ChronoUnit.MINUTES));
+
+            // The all-time path is the trusted one (asserted against exact expected values elsewhere); a window
+            // that contains all the data must reproduce it column-for-column — counts, duration, tokens, cost,
+            // errors, guardrails, and trace+span feedback scores.
+            assertThat(windowed.content())
+                    .usingRecursiveComparison()
+                    .ignoringCollectionOrder()
+                    .withComparatorForType(StatsUtils::bigDecimalComparator, BigDecimal.class)
+                    .withComparatorForFields(StatsUtils::closeToEpsilonComparator, "totalEstimatedCost")
+                    .isEqualTo(allTime.content());
+        }
+
+        private Trace traceWithId(String projectName, Instant idInstant) {
+            return factory.manufacturePojo(Trace.class).toBuilder()
+                    .projectName(projectName)
+                    .id(idGenerator.generateId(idInstant))
+                    .build();
+        }
+
+        /**
+         * The project-stats arm buckets errors by each trace's own event time, derived from its UUIDv7 id. That
+         * derivation was {@code toDateTime(UUIDv7ToDateTime(toUUID(t.id)))}, which narrows to a 32-bit
+         * {@code DateTime} and wraps modulo 2<sup>32</sup> seconds, so a trace dated circa 2162 read as circa 2026 and
+         * was counted in {@code recent_error_count} — inflating a project's recent-error stat, and its deviation, with
+         * an error that has not happened.
+         * <p>
+         * Pinned through the stats API rather than at the DAO, since {@code recent_error_count} is folded into
+         * {@link ErrorCountWithDeviation} by {@code StatsMapper} before anything else can observe it. The far-future
+         * trace is inserted straight into ClickHouse because ingestion validates a UUIDv7's embedded timestamp against
+         * a 24h window (OPIK-6888) and would reject it.
+         * <p>
+         * The expectation covers the whole summary, over every seeded trace: a far-future trace is still a trace, so
+         * it belongs in {@code traceCount} and in the duration quantiles, and only its error bucketing is special. The
+         * shared oracle already derives that correctly — it classifies by the id's own instant, which falls in neither
+         * window — so passing it the full list states the property rather than restating the arithmetic. The two
+         * follow-up assertions name it independently of the oracle, so the two cannot drift into agreement.
+         */
+        @Test
+        @DisplayName("when a trace's id carries a far-future timestamp, then it is counted in neither error period")
+        void getProjectStats__whenTraceIdIsFarFuture__thenItCountsAsNeitherRecentNorPastError(
+                TransactionTemplateAsync templateAsync) {
+            var workspaceName = UUID.randomUUID().toString();
+            var apiKey = UUID.randomUUID().toString();
+            var workspaceId = UUID.randomUUID().toString();
+
+            mockTargetWorkspace(apiKey, workspaceName, workspaceId);
+
+            var project = factory.manufacturePojo(Project.class);
+            var projectId = createProject(project, apiKey, workspaceName);
+
+            var ordinaryTraces = createTracesWithSpecificErrors(project.name(), workspaceName, apiKey,
+                    PodamUtils.getIntegerInRange(1, 5), PodamUtils.getIntegerInRange(1, 5));
+
+            // 2162-10-08 sits in the band toDateTime folds into the current week — the whole point of the case.
+            var farFutureTrace = createTraceWithError(project.name(), Instant.now())
+                    .toBuilder()
+                    .id(idGenerator.generateId(Instant.parse("2162-10-08T23:40:56Z")))
+                    .projectId(projectId)
+                    .createdBy(USER)
+                    .lastUpdatedBy(USER)
+                    .build();
+            TraceDBUtils.createTraceViaDB(farFutureTrace, workspaceId, templateAsync);
+
+            var allTraces = Stream.concat(ordinaryTraces.stream(), Stream.of(farFutureTrace)).toList();
+            var expectedProjectsSummary = List.of(
+                    mapFromProjectToSummary(
+                            createProjectSummary(project.toBuilder().id(projectId).build(), allTraces), allTraces));
+
+            var actualProjectsSummary = projectResourceClient.getProjectStatsSummary(project.name(), apiKey,
+                    workspaceName);
+
+            assertSummaryResponse(actualProjectsSummary, expectedProjectsSummary);
+
+            var actualItem = actualProjectsSummary.content().getFirst();
+            assertThat(actualItem.traceCount()).isEqualTo(allTraces.size());
+            assertThat(actualItem.errorCount().count()).isEqualTo(ordinaryTraces.size());
         }
 
         private void assertSummaryResponse(ProjectStatsSummary actualProjectsSummary,
@@ -1984,9 +2570,22 @@ class ProjectsResourceTest {
         assertThat(actualEntity.lastUpdatedBy()).isEqualTo(USER);
         assertThat(actualEntity.createdBy()).isEqualTo(USER);
 
-        assertThat(actualEntity.lastUpdatedTraceAt()).isEqualTo(project.lastUpdatedTraceAt());
+        assertLastUpdatedTraceAtEquals(actualEntity.lastUpdatedTraceAt(), project.lastUpdatedTraceAt());
         assertThat(actualEntity.createdAt()).isAfter(project.createdAt());
         assertThat(actualEntity.lastUpdatedAt()).isAfter(project.createdAt());
+    }
+
+    /**
+     * Compares a project's last_updated_trace_at marker with a one-microsecond tolerance: MySQL rounds it to micros
+     * while the source ClickHouse trace timestamp is truncated, so the same instant can differ by up to a microsecond.
+     * Null (projects without traces) is handled separately.
+     */
+    private void assertLastUpdatedTraceAtEquals(Instant actual, Instant expected) {
+        if (expected == null) {
+            assertThat(actual).isNull();
+        } else {
+            assertThat(actual).isCloseTo(expected, within(1, ChronoUnit.MICROS));
+        }
     }
 
     private void requestAndAssertLastTraceSorting(String workspaceName, String apiKey, List<Project> allProjects,
@@ -2142,6 +2741,25 @@ class ProjectsResourceTest {
                 assertThat(actualResponse.getStatusInfo().getStatusCode()).isEqualTo(422);
                 assertThat(actualResponse.hasEntity()).isTrue();
                 assertThat(actualResponse.readEntity(ErrorMessage.class).errors()).contains("name must not be blank");
+            }
+        }
+
+        @Test
+        @DisplayName("when description exceeds 255 characters, then reject the request")
+        void create__whenDescriptionTooLong__thenRejectCreate() {
+
+            String longDescription = "a".repeat(256);
+
+            try (var actualResponse = client.target(URL_TEMPLATE.formatted(baseURI)).request()
+                    .accept(MediaType.APPLICATION_JSON_TYPE)
+                    .header(HttpHeaders.AUTHORIZATION, API_KEY)
+                    .header(WORKSPACE_HEADER, TEST_WORKSPACE)
+                    .post(Entity.json(Project.builder().name("test-project").description(longDescription).build()))) {
+
+                assertThat(actualResponse.getStatusInfo().getStatusCode()).isEqualTo(422);
+                assertThat(actualResponse.hasEntity()).isTrue();
+                assertThat(actualResponse.readEntity(ErrorMessage.class).errors())
+                        .contains("description cannot exceed 255 characters");
             }
         }
 
@@ -2508,148 +3126,131 @@ class ProjectsResourceTest {
     }
 
     @Nested
-    @DisplayName("Upsert Project Configurations")
+    @DisplayName("Get Token Usage names")
     @TestInstance(TestInstance.Lifecycle.PER_CLASS)
-    class UpsertProjectConfigurations {
+    class GetTokenUsageNames {
 
         @Test
-        @DisplayName("when upsert project configurations with valid data, then return success")
-        void upsertProjectConfigurations__whenValidData__thenReturnSuccess() {
-            // Given
+        @DisplayName("when get token usage names, then return token usage names")
+        void findTokenUsageNames() {
+            // given
             var apiKey = UUID.randomUUID().toString();
             var workspaceId = UUID.randomUUID().toString();
             var workspaceName = UUID.randomUUID().toString();
 
             mockTargetWorkspace(apiKey, workspaceName, workspaceId);
 
-            var project = factory.manufacturePojo(Project.class);
-            var projectId = createProject(project, apiKey, workspaceName);
-            Duration timeoutToMarkThreadAsInactive = Duration.ofMinutes(30);
+            // when
+            String projectName = UUID.randomUUID().toString();
 
-            var configuration = Project.Configuration.builder()
-                    .timeoutToMarkThreadAsInactive(timeoutToMarkThreadAsInactive)
-                    .build();
+            UUID projectId = projectResourceClient.createProject(projectName, apiKey, workspaceName);
 
-            // When
-            projectResourceClient.updateConfigurations(configuration, projectId, apiKey, workspaceName);
+            // Create traces with spans that have token usage
+            List<Trace> traces = PodamFactoryUtils.manufacturePojoList(factory, Trace.class).stream()
+                    .map(trace -> trace.toBuilder()
+                            .projectName(projectName)
+                            .build())
+                    .toList();
 
-            // Verify the configuration was set by retrieving the project
-            var retrievedProject = projectResourceClient.getProject(projectId, apiKey, workspaceName);
-            assertThat(retrievedProject.configuration()).isNotNull();
-            assertThat(retrievedProject.configuration().timeoutToMarkThreadAsInactive())
-                    .isEqualTo(timeoutToMarkThreadAsInactive);
+            traceResourceClient.batchCreateTraces(traces, apiKey, workspaceName);
+
+            // Create spans with token usage
+            traces.forEach(trace -> {
+                List<Span> spans = PodamFactoryUtils.manufacturePojoList(factory, Span.class).stream()
+                        .map(span -> span.toBuilder()
+                                .usage(spanResourceClient.getTokenUsage())
+                                .model(spanResourceClient.randomModel().toString())
+                                .provider(spanResourceClient.provider())
+                                .traceId(trace.id())
+                                .projectName(projectName)
+                                .totalEstimatedCost(null)
+                                .build())
+                        .toList();
+
+                spanResourceClient.batchCreateSpans(spans, apiKey, workspaceName);
+            });
+
+            // then
+            var actualEntity = projectResourceClient.findTokenUsageNames(projectId, apiKey, workspaceName);
+            assertThat(actualEntity.names()).isNotEmpty();
+            assertThat(actualEntity.names()).contains("completion_tokens", "prompt_tokens", "total_tokens");
         }
 
         @Test
-        @DisplayName("when upsert project configurations with null timeout, then return success")
-        void upsertProjectConfigurations__whenNullTimeout__thenReturnSuccess() {
-            // Given
+        @DisplayName("when project has no spans with token usage, then return empty list")
+        void findTokenUsageNames__whenNoTokenUsage__thenReturnEmptyList() {
+            // given
             var apiKey = UUID.randomUUID().toString();
             var workspaceId = UUID.randomUUID().toString();
             var workspaceName = UUID.randomUUID().toString();
 
             mockTargetWorkspace(apiKey, workspaceName, workspaceId);
 
-            var project = factory.manufacturePojo(Project.class);
-            var projectId = createProject(project, apiKey, workspaceName);
+            // when
+            String projectName = UUID.randomUUID().toString();
+            UUID projectId = projectResourceClient.createProject(projectName, apiKey, workspaceName);
 
-            var configuration = Project.Configuration.builder()
-                    .timeoutToMarkThreadAsInactive(null)
-                    .build();
-
-            // When
-            projectResourceClient.updateConfigurations(configuration, projectId, apiKey, workspaceName);
-
-            // Verify the configuration was set by retrieving the project
-            var retrievedProject = projectResourceClient.getProject(projectId, apiKey, workspaceName);
-            assertThat(retrievedProject.configuration()).isNotNull();
-            assertThat(retrievedProject.configuration().timeoutToMarkThreadAsInactive()).isNull();
+            // then
+            var actualEntity = projectResourceClient.findTokenUsageNames(projectId, apiKey, workspaceName);
+            assertThat(actualEntity.names()).isEmpty();
         }
 
         @Test
-        @DisplayName("when upsert project configurations with invalid duration, then return bad request")
-        void upsertProjectConfigurations__whenInvalidDuration__thenReturnBadRequest() {
-            // Given
+        @DisplayName("when project not found, then return 404")
+        void findTokenUsageNames__whenProjectNotFound__thenReturn404() {
+            // given
             var apiKey = UUID.randomUUID().toString();
             var workspaceId = UUID.randomUUID().toString();
             var workspaceName = UUID.randomUUID().toString();
 
             mockTargetWorkspace(apiKey, workspaceName, workspaceId);
 
-            var project = factory.manufacturePojo(Project.class);
-            var projectId = createProject(project, apiKey, workspaceName);
+            UUID nonExistentProjectId = UUID.randomUUID();
 
-            // Create configuration with invalid duration (less than 1 second)
-            var configuration = Project.Configuration.builder()
-                    .timeoutToMarkThreadAsInactive(Duration.ofMillis(500))
-                    .build();
-
-            // When
-            try (var actualResponse = projectResourceClient.callUpdateConfigurations(configuration, projectId, apiKey,
-                    workspaceName)) {
-
-                // Then
-                assertThat(actualResponse.getStatusInfo().getStatusCode())
-                        .isEqualTo(HttpStatus.SC_UNPROCESSABLE_ENTITY);
-            }
+            // then
+            var actualEntity = projectResourceClient.findTokenUsageNames(
+                    nonExistentProjectId, apiKey, workspaceName, HttpStatus.SC_NOT_FOUND);
+            assertThat(actualEntity).isNull();
         }
+    }
 
-        // Test to try to upsert configuration with a duration longer than 7 days
-        @Test
-        @DisplayName("when upsert project configurations with duration longer than 7 days, then return bad request")
-        void upsertProjectConfigurations__whenDurationLongerThan7Days__thenReturnBadRequest() {
-            // Given
-            var apiKey = UUID.randomUUID().toString();
-            var workspaceId = UUID.randomUUID().toString();
-            var workspaceName = UUID.randomUUID().toString();
-            Duration maxDuration = Duration.ofDays(7);
-
-            mockTargetWorkspace(apiKey, workspaceName, workspaceId);
-
-            var project = factory.manufacturePojo(Project.class);
-            var projectId = createProject(project, apiKey, workspaceName);
-
-            // Create configuration with duration longer than 7 days
-            var configuration = Project.Configuration.builder()
-                    .timeoutToMarkThreadAsInactive(Duration.ofDays(8))
-                    .build();
-
-            // When
-            try (var actualResponse = projectResourceClient.callUpdateConfigurations(configuration, projectId, apiKey,
-                    workspaceName)) {
-
-                // Then
-                assertThat(actualResponse.getStatusInfo().getStatusCode())
-                        .isEqualTo(HttpStatus.SC_UNPROCESSABLE_ENTITY);
-                assertThat(actualResponse.hasEntity()).isTrue();
-                assertThat(actualResponse.readEntity(ErrorMessage.class).errors())
-                        .contains("timeoutToMarkThreadAsInactive duration exceeds the maximum allowed of "
-                                + maxDuration.toString());
-            }
-        }
+    /**
+     * The bounded demo-project lookup behind the daily usage counts. The scope is the point of it: without one the
+     * caller loads every demo project in the installation, which is what put a query literal large enough to time
+     * the usage queries out into the ClickHouse query text. Asserted here rather than against a mocked DAO because
+     * only the real query can show that the scope filters — a lookup that ignored it would return a superset, and
+     * the folds that consume it would still produce the right counts.
+     */
+    @Nested
+    @TestInstance(TestInstance.Lifecycle.PER_CLASS)
+    class GetDemoProjectIdsInWorkspaces {
 
         @Test
-        @DisplayName("when upsert project configurations for non-existent project, then return not found")
-        void upsertProjectConfigurations__whenNonExistentProject__thenReturnNotFound() {
-            // Given
+        void getDemoProjectIdsInWorkspaces__whenWorkspacesAreGiven__thenReturnsOnlyTheirDemoProjects() {
             var apiKey = UUID.randomUUID().toString();
             var workspaceId = UUID.randomUUID().toString();
             var workspaceName = UUID.randomUUID().toString();
-
             mockTargetWorkspace(apiKey, workspaceName, workspaceId);
 
-            var nonExistentProjectId = UUID.randomUUID();
-            var configuration = Project.Configuration.builder()
-                    .timeoutToMarkThreadAsInactive(Duration.ofMinutes(30))
-                    .build();
+            var demoProjectId = projectResourceClient.createProject(DemoData.PROJECTS.getFirst(), apiKey,
+                    workspaceName);
+            var regularProjectId = projectResourceClient.createProject("project-" + UUID.randomUUID(), apiKey,
+                    workspaceName);
 
-            // When
-            try (var actualResponse = projectResourceClient.callUpdateConfigurations(configuration,
-                    nonExistentProjectId, apiKey, workspaceName)) {
+            var otherApiKey = UUID.randomUUID().toString();
+            var otherWorkspaceId = UUID.randomUUID().toString();
+            var otherWorkspaceName = UUID.randomUUID().toString();
+            mockTargetWorkspace(otherApiKey, otherWorkspaceName, otherWorkspaceId);
+            var demoProjectOutOfScopeId = projectResourceClient.createProject(DemoData.PROJECTS.getFirst(),
+                    otherApiKey, otherWorkspaceName);
 
-                // Then
-                assertThat(actualResponse.getStatusInfo().getStatusCode()).isEqualTo(HttpStatus.SC_NOT_FOUND);
-            }
+            var actualIds = projectService.getDemoProjectIdsInWorkspaces(Set.of(workspaceId)).block();
+
+            assertThat(actualIds)
+                    .as("only the demo projects of the given workspaces: '%s' is not a demo project, and demo "
+                            + "project '%s' belongs to a workspace that was not asked for", regularProjectId,
+                            demoProjectOutOfScopeId)
+                    .containsExactly(demoProjectId);
         }
     }
 

@@ -1,4 +1,5 @@
 import { UsageData } from "@/types/shared";
+import { PROVIDER_TYPE } from "@/types/providers";
 import { CommentItems } from "./comment";
 import { GuardrailValidation } from "./guardrails";
 import { ThreadStatus } from "./thread";
@@ -17,17 +18,45 @@ export enum FEEDBACK_SCORE_TYPE {
 export enum TRACE_VISIBILITY_MODE {
   default = "default",
   hidden = "hidden",
+  // Sentinel for entity-scoped views (experiment/playground/trial logs): show traces of every
+  // visibility. Never sent to the backend — it maps to "no visibility filter" (see generateVisibilityFilters).
+  all = "all",
 }
 
-export interface TraceFeedbackScore {
+export enum LOGS_SOURCE {
+  sdk = "sdk",
+  experiment = "experiment",
+  playground = "playground",
+  optimization = "optimization",
+  evaluator = "evaluator",
+}
+
+export type FeedbackScoreValueByAuthorMap = Record<
+  string,
+  {
+    value: number;
+    reason?: string;
+    category_name?: string;
+    source: FEEDBACK_SCORE_TYPE;
+    last_updated_at: string;
+    span_type?: string;
+    span_id?: string;
+    source_queue_id?: string;
+    author?: string;
+  }
+>;
+
+export type TraceFeedbackScore = {
   category_name?: string;
   reason?: string;
   name: string;
   source: FEEDBACK_SCORE_TYPE;
-  value: number;
+  created_by?: string;
   last_updated_by?: string;
   last_updated_at?: string;
-}
+  value: number;
+  value_by_author?: FeedbackScoreValueByAuthorMap;
+};
 
 export interface BaseTraceDataErrorInfo {
   exception_type: string;
@@ -49,19 +78,32 @@ export interface BaseTraceData {
   feedback_scores?: TraceFeedbackScore[];
   comments: CommentItems;
   tags: string[];
+  environment?: string;
   usage?: UsageData;
   total_estimated_cost?: number;
   error_info?: BaseTraceDataErrorInfo;
   guardrails_validations?: GuardrailValidation[];
 }
 
+export interface ExperimentItemReference {
+  id: string;
+  name: string;
+  dataset_id: string;
+  dataset_item_id: string;
+}
+
 export interface Trace extends BaseTraceData {
   span_count?: number;
   llm_span_count?: number;
+  has_tool_spans?: boolean;
+  providers?: PROVIDER_TYPE[];
   thread_id?: string;
   project_id: string;
   workspace_name?: string;
   visibility_mode?: TRACE_VISIBILITY_MODE;
+  span_feedback_scores?: TraceFeedbackScore[];
+  experiment?: ExperimentItemReference;
+  source?: LOGS_SOURCE;
 }
 
 export enum SPAN_TYPE {

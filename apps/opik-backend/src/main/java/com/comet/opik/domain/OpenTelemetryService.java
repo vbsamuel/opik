@@ -1,8 +1,10 @@
 package com.comet.opik.domain;
 
 import com.comet.opik.api.Project;
+import com.comet.opik.api.Source;
 import com.comet.opik.api.SpanBatch;
 import com.comet.opik.api.Trace;
+import com.comet.opik.domain.mapping.OpenTelemetryMappingRuleFactory;
 import com.comet.opik.infrastructure.OpenTelemetryConfig;
 import com.comet.opik.infrastructure.auth.RequestContext;
 import com.google.inject.ImplementedBy;
@@ -14,6 +16,7 @@ import jakarta.inject.Singleton;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
 import org.redisson.api.RedissonReactiveClient;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -22,8 +25,10 @@ import ru.vyarus.dropwizard.guice.module.yaml.bind.Config;
 
 import java.time.Duration;
 import java.util.Base64;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -60,6 +65,19 @@ class OpenTelemetryServiceImpl implements OpenTelemetryService {
     @Override
     public Mono<Long> parseAndStoreSpans(@NonNull ExportTraceServiceRequest traceRequest, @NonNull String projectName) {
 
+        // An exporter may legitimately send a batch carrying no spans, and OTLP treats that as a valid,
+        // empty export. It used to reach SpanService.create, whose non-empty precondition surfaced it to the
+        // exporter as a 500. Answered as a no-op — and before getOrCreate below, so an empty export does not
+        // leave a project behind either.
+        var carriesSpans = traceRequest.getResourceSpansList().stream()
+                .flatMap(resourceSpans -> resourceSpans.getScopeSpansList().stream())
+                .anyMatch(scopeSpans -> scopeSpans.getSpansCount() > 0);
+        if (!carriesSpans) {
+            log.info("Received an OpenTelemetry batch with no spans; nothing to store, project='{}'",
+                    projectName);
+            return Mono.just(0L);
+        }
+
         // make sure project exists before starting processing
         return projectService.getOrCreate(projectName)
                 .map(Project::id)
@@ -77,7 +95,7 @@ class OpenTelemetryServiceImpl implements OpenTelemetryService {
                             .flatMap(resourceSpans -> resourceSpans.getScopeSpansList().stream())
                             .map(scopeSpans -> scopeSpans.getScope().getName())
                             .distinct()
-                            .filter(OpenTelemetryMappingRule::isValidInstrumentation)
+                            .filter(OpenTelemetryMappingRuleFactory::isValidInstrumentation)
                             .findFirst()
                             .orElse(null);
 
@@ -102,12 +120,19 @@ class OpenTelemetryServiceImpl implements OpenTelemetryService {
     private Mono<Long> doStoreSpans(List<Span> otelSpans, Map<String, UUID> traceIdMapper, String projectName,
             String integrationName) {
 
+        // Track trace IDs that came from opik.trace_id attribute overrides.
+        // These spans connect to existing OPIK traces, so we must not create new traces for them.
+        Set<UUID> overriddenTraceIds = new HashSet<>();
+
         // converts otel spans into opik spans, using the mapped opik trace id
         var opikSpans = otelSpans.stream()
                 .map(otelSpan -> {
                     var otelTraceIdBase64 = base64OtelId(otelSpan.getTraceId());
 
                     var opikTraceId = traceIdMapper.get(otelTraceIdBase64);
+
+                    OpenTelemetryMapper.extractOpikTraceId(otelSpan)
+                            .ifPresent(overriddenTraceIds::add);
 
                     return OpenTelemetryMapper.toOpikSpan(otelSpan, opikTraceId, integrationName);
                 })
@@ -116,10 +141,46 @@ class OpenTelemetryServiceImpl implements OpenTelemetryService {
                         .build())
                 .toList();
 
-        // check if there spans without parentId: we will use them as a Trace too
-        return Flux.fromStream(opikSpans.stream().filter(span -> span.parentSpanId() == null))
+        // Some integrations (e.g. PydanticAI/Logfire) put cumulative usage tokens on parent/agent spans
+        // that already represent the sum of all child LLM call spans. Including both the parent and children
+        // in sumMap() aggregation would double-count tokens. Clear usage from parent spans whose children
+        // also carry usage, so only the leaf LLM spans contribute to the aggregated token counts.
+        var parentIdsWithChildrenHavingUsage = opikSpans.stream()
+                .filter(span -> span.parentSpanId() != null
+                        && span.usage() != null
+                        && !span.usage().isEmpty())
+                .map(com.comet.opik.api.Span::parentSpanId)
+                .collect(Collectors.toSet());
+
+        var dedupedSpans = parentIdsWithChildrenHavingUsage.isEmpty()
+                ? opikSpans
+                : opikSpans.stream()
+                        .map(span -> parentIdsWithChildrenHavingUsage.contains(span.id())
+                                && span.usage() != null
+                                && !span.usage().isEmpty()
+                                        ? span.toBuilder().usage(null).build()
+                                        : span)
+                        .toList();
+
+        // Use spans without parentId as Trace roots. Skip opik.trace_id overrides (they attach to
+        // existing traces). Multiple roots can share one traceId (e.g. when parent_span_id==trace_id
+        // is nulled in the mapper), so dedup by traceId to create only one trace per id. First
+        // root in encounter order wins.
+        var seenTraceIds = new HashSet<UUID>();
+        var rootSpansByTraceId = dedupedSpans.stream()
+                .filter(span -> span.parentSpanId() == null)
+                .filter(span -> !overriddenTraceIds.contains(span.traceId()))
+                .filter(span -> seenTraceIds.add(span.traceId()))
+                .toList();
+        return Flux.fromStream(rootSpansByTraceId.stream())
                 .flatMap(rootSpan -> {
-                    var trace = Trace.builder()
+                    // Extract thread_id from root span metadata if present
+                    String threadId = null;
+                    if (rootSpan.metadata() != null && rootSpan.metadata().has("thread_id")) {
+                        threadId = rootSpan.metadata().get("thread_id").asText();
+                    }
+
+                    var traceBuilder = Trace.builder()
                             .id(rootSpan.traceId())
                             .name(rootSpan.name())
                             .projectName(rootSpan.projectName())
@@ -129,16 +190,22 @@ class OpenTelemetryServiceImpl implements OpenTelemetryService {
                             .input(rootSpan.input())
                             .output(rootSpan.output())
                             .metadata(rootSpan.metadata())
-                            .build();
+                            .tags(rootSpan.tags())
+                            .errorInfo(rootSpan.errorInfo())
+                            .source(Source.SDK);
 
-                    return traceService.create(trace);
+                    if (StringUtils.isNotBlank(threadId)) {
+                        traceBuilder.threadId(threadId);
+                    }
+
+                    return traceService.create(traceBuilder.build());
                 })
                 .doOnNext(traceId -> log.info("TraceId '{}' created", traceId))
                 .then(Mono.defer(() -> {
-                    var spanBatch = SpanBatch.builder().spans(opikSpans).build();
+                    var spanBatch = SpanBatch.builder().spans(dedupedSpans).build();
 
                     log.info("Parsed OpenTelemetry span batch for project '{}' into {} spans", projectName,
-                            opikSpans.size());
+                            dedupedSpans.size());
 
                     return spanService.create(spanBatch);
                 }));

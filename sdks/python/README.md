@@ -53,6 +53,35 @@ opik.configure(
 ```
 Refer to the [Python SDK documentation](https://www.comet.com/docs/opik/python-sdk-reference/) for more configuration options.
 
+### Dynamic Tracing Control
+
+Control tracing behavior at runtime without code changes:
+
+```python
+import opik
+
+# Disable tracing globally
+opik.set_tracing_active(False)
+
+# Check current state
+print(opik.is_tracing_active())  # False
+
+# Re-enable tracing
+opik.set_tracing_active(True)
+
+# Reset to configuration default
+opik.reset_tracing_to_config_default()
+```
+
+This is useful for:
+- Performance optimization in high-throughput systems
+- Conditional tracing based on user type or request parameters
+- Debugging and troubleshooting without redeployment
+- Implementing sampling strategies
+- Calls already in progress when you disable tracing still finish logging.
+
+See `examples/dynamic_tracing_cookbook.py` for comprehensive usage patterns.
+
 ## Basic Usage: Tracing
 
 The easiest way to log traces is to use the `@opik.track` decorator:
@@ -78,7 +107,18 @@ def my_llm_function(user_question: str) -> str:
 
 my_llm_function("Hello, Opik!")
 ```
-Traces will appear in your configured Opik project. Opik also offers many direct [integrations](https://www.comet.com/docs/opik/tracing/integrations/overview/) for popular LLM frameworks.
+Traces will appear in your configured Opik project. Opik also offers many direct [integrations](https://www.comet.com/docs/opik/integrations/overview/) for popular LLM frameworks.
+
+## CLI Commands
+
+Opik provides powerful CLI commands for exporting and importing data between projects:
+
+- **Export**: Export traces, datasets, and prompts from projects to local JSON files
+- **Import**: Import data from local files into projects
+- **Migration**: Move data between projects or environments
+- **Backup**: Create local backups of your project data
+
+For detailed information about the CLI export/import functionality, see [Import/Export Commands](../../apps/opik-documentation/documentation/fern/docs-v2/observability/migrate_data.mdx).
 
 ## Development & Contribution Guidelines
 

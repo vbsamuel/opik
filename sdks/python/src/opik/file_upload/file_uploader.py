@@ -1,11 +1,13 @@
 import logging
+import os
 from typing import Optional
 
 import httpx
 
 from . import upload_client, file_upload_monitor
 from . import upload_options as file_upload_options
-from .s3_multipart_upload import file_parts_strategy, s3_file_uploader, s3_httpx_client
+from .. import format_helpers, s3_httpx_client
+from .s3_multipart_upload import file_parts_strategy, s3_file_uploader
 from ..rest_api import client as rest_api_client
 from ..rest_api import types as rest_api_types
 
@@ -27,15 +29,35 @@ def upload_attachment(
             httpx_client=upload_httpx_client,
             monitor=monitor,
         )
+
+        # delete the file after upload if requested
+        if upload_options.delete_after_upload:
+            _delete_attachment_file(upload_options.file_path)
+
+        # signal that file upload is completed successfully
+        if upload_options.on_upload_success is not None:
+            upload_options.on_upload_success()
+
     except Exception as e:
         LOGGER.error(
-            "Failed to upload attachment: '%s' from file: '%s', reason: %s",
+            "Failed to upload attachment: '%s' from file: [%s] with size: [%s]. Error: %s",
             upload_options.file_name,
             upload_options.file_path,
+            format_helpers.format_bytes(upload_options.file_size),
             e,
             exc_info=True,
         )
+        if upload_options.on_upload_failed is not None:
+            # signal that the upload failed
+            upload_options.on_upload_failed(e)
         raise
+
+
+def _delete_attachment_file(file_path: str) -> None:
+    try:
+        os.unlink(file_path)
+    except OSError as e:
+        LOGGER.info(f"Failed to delete attachment file: '{file_path}'. Reason: {e}.")
 
 
 def _do_upload_attachment(

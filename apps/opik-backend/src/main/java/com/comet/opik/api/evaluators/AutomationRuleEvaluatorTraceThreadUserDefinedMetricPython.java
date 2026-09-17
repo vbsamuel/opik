@@ -1,5 +1,6 @@
 package com.comet.opik.api.evaluators;
 
+import com.comet.opik.api.filter.TraceThreadFilter;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonView;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
@@ -13,6 +14,9 @@ import lombok.experimental.SuperBuilder;
 
 import java.beans.ConstructorProperties;
 import java.time.Instant;
+import java.util.List;
+import java.util.Set;
+import java.util.SortedSet;
 import java.util.UUID;
 
 import static com.comet.opik.api.evaluators.AutomationRuleEvaluatorTraceThreadUserDefinedMetricPython.TraceThreadUserDefinedMetricPythonCode;
@@ -24,25 +28,41 @@ import static com.comet.opik.api.evaluators.AutomationRuleEvaluatorTraceThreadUs
 @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
 public final class AutomationRuleEvaluatorTraceThreadUserDefinedMetricPython
         extends
-            AutomationRuleEvaluator<TraceThreadUserDefinedMetricPythonCode> {
+            AutomationRuleEvaluator<TraceThreadUserDefinedMetricPythonCode, TraceThreadFilter> {
 
     @Builder(toBuilder = true)
     @JsonIgnoreProperties(ignoreUnknown = true)
     @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
     public record TraceThreadUserDefinedMetricPythonCode(
-            @JsonView( {
-                    View.Public.class, View.Write.class}) @NotNull String metric){
+            @JsonView({
+                    View.Public.class, View.Write.class}) @NotNull String metric) {
 
         public static final String CONTEXT_ARG_NAME = "context";
     }
 
-    @ConstructorProperties({"id", "projectId", "projectName", "name", "samplingRate", "code", "createdAt", "createdBy",
+    @ConstructorProperties({"id", "projectId", "projectName", "projects", "projectIds", "name", "samplingRate",
+            "enabled", "triggerScope", "filters", "code",
+            "createdAt",
+            "createdBy",
             "lastUpdatedAt", "lastUpdatedBy"})
-    public AutomationRuleEvaluatorTraceThreadUserDefinedMetricPython(UUID id, @NotNull UUID projectId,
-            String projectName,
-            @NotBlank String name, float samplingRate, @NotNull TraceThreadUserDefinedMetricPythonCode code,
+    public AutomationRuleEvaluatorTraceThreadUserDefinedMetricPython(UUID id, UUID projectId, String projectName,
+            SortedSet<ProjectReference> projects,
+            Set<UUID> projectIds,
+            @NotBlank String name, float samplingRate, boolean enabled, EvalTriggerScope triggerScope,
+            List<TraceThreadFilter> filters,
+            @NotNull TraceThreadUserDefinedMetricPythonCode code,
             Instant createdAt, String createdBy, Instant lastUpdatedAt, String lastUpdatedBy) {
-        super(id, projectId, projectName, name, samplingRate, code, createdAt, createdBy, lastUpdatedAt, lastUpdatedBy);
+        super(id, projectId, projectName, projects, projectIds, name, samplingRate, enabled, triggerScope, filters,
+                code,
+                createdAt, createdBy,
+                lastUpdatedAt,
+                lastUpdatedBy);
+    }
+
+    @JsonView({View.Public.class, View.Write.class})
+    @Override
+    public List<TraceThreadFilter> getFilters() {
+        return super.getFilters();
     }
 
     @JsonView({View.Public.class, View.Write.class})

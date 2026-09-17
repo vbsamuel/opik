@@ -5,7 +5,8 @@ from typing import List, Optional, IO
 
 import httpx
 
-from . import file_parts_strategy, s3_upload_error, s3_httpx_client
+from opik import s3_httpx_client
+from . import file_parts_strategy, s3_upload_error
 from .. import file_upload_monitor
 
 
@@ -44,8 +45,14 @@ class S3FileDataUploader:
             with file_to_upload.open("rb") as fp:
                 self._upload(fp=fp)
         except Exception as e:
+            connection_error = isinstance(
+                e,
+                s3_httpx_client.RETRYABLE_CONNECTION_ERRORS,
+            )
             raise s3_upload_error.S3UploadFileError(
-                file=self._file_parts.file, reason=str(e)
+                file=self._file_parts.file,
+                reason=str(e),
+                connection_error=connection_error,
             ) from e
 
         return self.uploaded_parts

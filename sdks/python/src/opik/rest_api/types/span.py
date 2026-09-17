@@ -9,7 +9,7 @@ from .comment import Comment
 from .error_info import ErrorInfo
 from .feedback_score import FeedbackScore
 from .json_list_string import JsonListString
-from .json_node import JsonNode
+from .span_source import SpanSource
 from .span_type import SpanType
 
 
@@ -29,7 +29,7 @@ class Span(UniversalBaseModel):
     end_time: typing.Optional[dt.datetime] = None
     input: typing.Optional[JsonListString] = None
     output: typing.Optional[JsonListString] = None
-    metadata: typing.Optional[JsonNode] = None
+    metadata: typing.Optional[JsonListString] = None
     model: typing.Optional[str] = None
     provider: typing.Optional[str] = None
     tags: typing.Optional[typing.List[str]] = None
@@ -47,6 +47,14 @@ class Span(UniversalBaseModel):
     """
     Duration in milliseconds as a decimal number to support sub-millisecond precision
     """
+
+    ttft: typing.Optional[float] = pydantic.Field(default=None)
+    """
+    Time to first token in milliseconds
+    """
+
+    source: typing.Optional[SpanSource] = None
+    environment: typing.Optional[str] = None
 
     if IS_PYDANTIC_V2:
         model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(extra="allow", frozen=True)  # type: ignore # Pydantic v2

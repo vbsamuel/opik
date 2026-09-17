@@ -18,7 +18,11 @@ from ..types.json_node_write import JsonNodeWrite
 from ..types.prompt_detail import PromptDetail
 from ..types.prompt_page_public import PromptPagePublic
 from ..types.prompt_version_detail import PromptVersionDetail
+from ..types.prompt_version_link_public import PromptVersionLinkPublic
 from ..types.prompt_version_page_public import PromptVersionPagePublic
+from ..types.prompt_version_update import PromptVersionUpdate
+from .types.create_prompt_version_detail_template_structure import CreatePromptVersionDetailTemplateStructure
+from .types.prompt_write_template_structure import PromptWriteTemplateStructure
 from .types.prompt_write_type import PromptWriteType
 
 # this is used as the default value for optional parameters
@@ -35,6 +39,9 @@ class RawPromptsClient:
         page: typing.Optional[int] = None,
         size: typing.Optional[int] = None,
         name: typing.Optional[str] = None,
+        project_id: typing.Optional[str] = None,
+        sorting: typing.Optional[str] = None,
+        filters: typing.Optional[str] = None,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> HttpResponse[PromptPagePublic]:
         """
@@ -47,6 +54,12 @@ class RawPromptsClient:
         size : typing.Optional[int]
 
         name : typing.Optional[str]
+
+        project_id : typing.Optional[str]
+
+        sorting : typing.Optional[str]
+
+        filters : typing.Optional[str]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -63,6 +76,9 @@ class RawPromptsClient:
                 "page": page,
                 "size": size,
                 "name": name,
+                "project_id": project_id,
+                "sorting": sorting,
+                "filters": filters,
             },
             request_options=request_options,
         )
@@ -86,11 +102,15 @@ class RawPromptsClient:
         *,
         name: str,
         id: typing.Optional[str] = OMIT,
+        project_id: typing.Optional[str] = OMIT,
+        project_name: typing.Optional[str] = OMIT,
         description: typing.Optional[str] = OMIT,
         template: typing.Optional[str] = OMIT,
         metadata: typing.Optional[JsonNodeWrite] = OMIT,
         change_description: typing.Optional[str] = OMIT,
         type: typing.Optional[PromptWriteType] = OMIT,
+        template_structure: typing.Optional[PromptWriteTemplateStructure] = OMIT,
+        tags: typing.Optional[typing.Sequence[str]] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> HttpResponse[None]:
         """
@@ -102,6 +122,12 @@ class RawPromptsClient:
 
         id : typing.Optional[str]
 
+        project_id : typing.Optional[str]
+            Project ID. Takes precedence over project_name when both are provided.
+
+        project_name : typing.Optional[str]
+            For project scope, specify either project_id or project_name. If project_name is provided and the project does not exist, it will be created. Ignored when project_id is provided. If neither is provided, the prompt is created at workspace level.
+
         description : typing.Optional[str]
 
         template : typing.Optional[str]
@@ -111,6 +137,11 @@ class RawPromptsClient:
         change_description : typing.Optional[str]
 
         type : typing.Optional[PromptWriteType]
+
+        template_structure : typing.Optional[PromptWriteTemplateStructure]
+            Template structure type: 'text' or 'chat'. Immutable after creation.
+
+        tags : typing.Optional[typing.Sequence[str]]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -125,11 +156,15 @@ class RawPromptsClient:
             json={
                 "id": id,
                 "name": name,
+                "project_id": project_id,
+                "project_name": project_name,
                 "description": description,
                 "template": template,
                 "metadata": metadata,
                 "change_description": change_description,
                 "type": type,
+                "template_structure": template_structure,
+                "tags": tags,
             },
             headers={
                 "content-type": "application/json",
@@ -179,7 +214,14 @@ class RawPromptsClient:
         raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
 
     def create_prompt_version(
-        self, *, name: str, version: PromptVersionDetail, request_options: typing.Optional[RequestOptions] = None
+        self,
+        *,
+        name: str,
+        version: PromptVersionDetail,
+        template_structure: typing.Optional[CreatePromptVersionDetailTemplateStructure] = OMIT,
+        project_id: typing.Optional[str] = OMIT,
+        project_name: typing.Optional[str] = OMIT,
+        request_options: typing.Optional[RequestOptions] = None,
     ) -> HttpResponse[PromptVersionDetail]:
         """
         Create prompt version
@@ -189,6 +231,15 @@ class RawPromptsClient:
         name : str
 
         version : PromptVersionDetail
+
+        template_structure : typing.Optional[CreatePromptVersionDetailTemplateStructure]
+            Template structure for the prompt: 'text' or 'chat'. Note: This field is only used when creating a new prompt. If a prompt with the given name already exists, this field is ignored and the existing prompt's template structure is used. Template structure is immutable after prompt creation.
+
+        project_id : typing.Optional[str]
+            Project ID. Takes precedence over project_name when both are provided.
+
+        project_name : typing.Optional[str]
+            If provided, scopes the prompt to the specified project. Ignored when project_id is provided.
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -206,6 +257,9 @@ class RawPromptsClient:
                 "version": convert_and_respect_annotation_metadata(
                     object_=version, annotation=PromptVersionDetail, direction="write"
                 ),
+                "template_structure": template_structure,
+                "project_id": project_id,
+                "project_name": project_name,
             },
             headers={
                 "content-type": "application/json",
@@ -261,15 +315,100 @@ class RawPromptsClient:
             raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
         raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
 
+    def update_prompt_versions(
+        self,
+        *,
+        ids: typing.Sequence[str],
+        update: PromptVersionUpdate,
+        merge_tags: typing.Optional[bool] = OMIT,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> HttpResponse[None]:
+        """
+        Update one or more prompt versions.
+
+        Note: Prompt versions are immutable by design.
+        Only organizational properties, such as tags etc., can be updated.
+        Core properties like template and metadata cannot be modified after creation.
+
+        PATCH semantics:
+        - non-empty values update the field
+        - null values preserve existing field values (no change)
+        - empty values explicitly clear the field
+
+        Parameters
+        ----------
+        ids : typing.Sequence[str]
+            IDs of prompt versions to update
+
+        update : PromptVersionUpdate
+
+        merge_tags : typing.Optional[bool]
+            Tag merge behavior:
+            - true: Add new tags to existing tags (union)
+            - false: Replace all existing tags with new tags (default behaviour if not provided)
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        HttpResponse[None]
+        """
+        _response = self._client_wrapper.httpx_client.request(
+            "v1/private/prompts/versions",
+            method="PATCH",
+            json={
+                "ids": ids,
+                "update": convert_and_respect_annotation_metadata(
+                    object_=update, annotation=PromptVersionUpdate, direction="write"
+                ),
+                "merge_tags": merge_tags,
+            },
+            headers={
+                "content-type": "application/json",
+            },
+            request_options=request_options,
+            omit=OMIT,
+        )
+        try:
+            if 200 <= _response.status_code < 300:
+                return HttpResponse(response=_response, data=None)
+            if _response.status_code == 400:
+                raise BadRequestError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        typing.Optional[typing.Any],
+                        parse_obj_as(
+                            type_=typing.Optional[typing.Any],  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            _response_json = _response.json()
+        except JSONDecodeError:
+            raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
+        raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
+
     def get_prompt_by_id(
-        self, id: str, *, request_options: typing.Optional[RequestOptions] = None
+        self,
+        id: str,
+        *,
+        mask_id: typing.Optional[str] = None,
+        environment: typing.Optional[str] = None,
+        request_options: typing.Optional[RequestOptions] = None,
     ) -> HttpResponse[PromptDetail]:
         """
-        Get prompt by id
+        Get prompt by id; when mask_id or environment is provided, requestedVersion is populated with the resolved version. mask_id and environment are mutually exclusive.
 
         Parameters
         ----------
         id : str
+
+        mask_id : typing.Optional[str]
+            Optional mask version id; when set, requestedVersion is the mask row for that id
+
+        environment : typing.Optional[str]
+            Optional environment name; when set, requestedVersion is the version mapped to that environment for the prompt
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -282,6 +421,10 @@ class RawPromptsClient:
         _response = self._client_wrapper.httpx_client.request(
             f"v1/private/prompts/{jsonable_encoder(id)}",
             method="GET",
+            params={
+                "mask_id": mask_id,
+                "environment": environment,
+            },
             request_options=request_options,
         )
         try:
@@ -294,6 +437,17 @@ class RawPromptsClient:
                     ),
                 )
                 return HttpResponse(response=_response, data=_data)
+            if _response.status_code == 400:
+                raise BadRequestError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        typing.Optional[typing.Any],
+                        parse_obj_as(
+                            type_=typing.Optional[typing.Any],  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
             if _response.status_code == 404:
                 raise NotFoundError(
                     headers=dict(_response.headers),
@@ -316,6 +470,7 @@ class RawPromptsClient:
         *,
         name: str,
         description: typing.Optional[str] = OMIT,
+        tags: typing.Optional[typing.Sequence[str]] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> HttpResponse[None]:
         """
@@ -328,6 +483,8 @@ class RawPromptsClient:
         name : str
 
         description : typing.Optional[str]
+
+        tags : typing.Optional[typing.Sequence[str]]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -342,6 +499,7 @@ class RawPromptsClient:
             json={
                 "name": name,
                 "description": description,
+                "tags": tags,
             },
             headers={
                 "content-type": "application/json",
@@ -466,6 +624,77 @@ class RawPromptsClient:
             raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
         raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
 
+    def get_prompt_by_commit(
+        self, commit: str, *, request_options: typing.Optional[RequestOptions] = None
+    ) -> HttpResponse[PromptDetail]:
+        """
+        Get prompt by commit
+
+        Parameters
+        ----------
+        commit : str
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        HttpResponse[PromptDetail]
+            OK
+        """
+        _response = self._client_wrapper.httpx_client.request(
+            f"v1/private/prompts/by-commit/{jsonable_encoder(commit)}",
+            method="GET",
+            request_options=request_options,
+        )
+        try:
+            if 200 <= _response.status_code < 300:
+                _data = typing.cast(
+                    PromptDetail,
+                    parse_obj_as(
+                        type_=PromptDetail,  # type: ignore
+                        object_=_response.json(),
+                    ),
+                )
+                return HttpResponse(response=_response, data=_data)
+            if _response.status_code == 400:
+                raise BadRequestError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        typing.Optional[typing.Any],
+                        parse_obj_as(
+                            type_=typing.Optional[typing.Any],  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            if _response.status_code == 404:
+                raise NotFoundError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        typing.Optional[typing.Any],
+                        parse_obj_as(
+                            type_=typing.Optional[typing.Any],  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            if _response.status_code == 409:
+                raise ConflictError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        typing.Optional[typing.Any],
+                        parse_obj_as(
+                            type_=typing.Optional[typing.Any],  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            _response_json = _response.json()
+        except JSONDecodeError:
+            raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
+        raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
+
     def get_prompt_version_by_id(
         self, version_id: str, *, request_options: typing.Optional[RequestOptions] = None
     ) -> HttpResponse[PromptVersionDetail]:
@@ -515,12 +744,77 @@ class RawPromptsClient:
             raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
         raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
 
+    def get_prompt_version_by_number(
+        self, prompt_id: str, version_number: str, *, request_options: typing.Optional[RequestOptions] = None
+    ) -> HttpResponse[PromptVersionDetail]:
+        """
+        Get a prompt version by its sequential v<N> number for the given prompt.
+
+        Parameters
+        ----------
+        prompt_id : str
+
+        version_number : str
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        HttpResponse[PromptVersionDetail]
+            Prompt version resource
+        """
+        _response = self._client_wrapper.httpx_client.request(
+            f"v1/private/prompts/{jsonable_encoder(prompt_id)}/versions/by-number/{jsonable_encoder(version_number)}",
+            method="GET",
+            request_options=request_options,
+        )
+        try:
+            if 200 <= _response.status_code < 300:
+                _data = typing.cast(
+                    PromptVersionDetail,
+                    parse_obj_as(
+                        type_=PromptVersionDetail,  # type: ignore
+                        object_=_response.json(),
+                    ),
+                )
+                return HttpResponse(response=_response, data=_data)
+            if _response.status_code == 400:
+                raise BadRequestError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        typing.Optional[typing.Any],
+                        parse_obj_as(
+                            type_=typing.Optional[typing.Any],  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            if _response.status_code == 404:
+                raise NotFoundError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        typing.Optional[typing.Any],
+                        parse_obj_as(
+                            type_=typing.Optional[typing.Any],  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            _response_json = _response.json()
+        except JSONDecodeError:
+            raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
+        raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
+
     def get_prompt_versions(
         self,
         id: str,
         *,
         page: typing.Optional[int] = None,
         size: typing.Optional[int] = None,
+        search: typing.Optional[str] = None,
+        sorting: typing.Optional[str] = None,
+        filters: typing.Optional[str] = None,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> HttpResponse[PromptVersionPagePublic]:
         """
@@ -533,6 +827,13 @@ class RawPromptsClient:
         page : typing.Optional[int]
 
         size : typing.Optional[int]
+
+        search : typing.Optional[str]
+            Search text to find in template or change description fields
+
+        sorting : typing.Optional[str]
+
+        filters : typing.Optional[str]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -548,6 +849,9 @@ class RawPromptsClient:
             params={
                 "page": page,
                 "size": size,
+                "search": search,
+                "sorting": sorting,
+                "filters": filters,
             },
             request_options=request_options,
         )
@@ -566,17 +870,140 @@ class RawPromptsClient:
             raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
         raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
 
-    def retrieve_prompt_version(
-        self, *, name: str, commit: typing.Optional[str] = OMIT, request_options: typing.Optional[RequestOptions] = None
+    def get_prompts_by_commits(
+        self, *, commits: typing.Sequence[str], request_options: typing.Optional[RequestOptions] = None
+    ) -> HttpResponse[typing.List[PromptVersionLinkPublic]]:
+        """
+        Get prompts by prompt version commits
+
+        Parameters
+        ----------
+        commits : typing.Sequence[str]
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        HttpResponse[typing.List[PromptVersionLinkPublic]]
+            OK
+        """
+        _response = self._client_wrapper.httpx_client.request(
+            "v1/private/prompts/retrieve-by-commits",
+            method="POST",
+            json={
+                "commits": commits,
+            },
+            headers={
+                "content-type": "application/json",
+            },
+            request_options=request_options,
+            omit=OMIT,
+        )
+        try:
+            if 200 <= _response.status_code < 300:
+                _data = typing.cast(
+                    typing.List[PromptVersionLinkPublic],
+                    parse_obj_as(
+                        type_=typing.List[PromptVersionLinkPublic],  # type: ignore
+                        object_=_response.json(),
+                    ),
+                )
+                return HttpResponse(response=_response, data=_data)
+            _response_json = _response.json()
+        except JSONDecodeError:
+            raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
+        raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
+
+    def restore_prompt_version(
+        self, prompt_id: str, version_id: str, *, request_options: typing.Optional[RequestOptions] = None
     ) -> HttpResponse[PromptVersionDetail]:
         """
-        Retrieve prompt version
+        Restore a prompt version by creating a new version with the content from the specified version
+
+        Parameters
+        ----------
+        prompt_id : str
+
+        version_id : str
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        HttpResponse[PromptVersionDetail]
+            OK
+        """
+        _response = self._client_wrapper.httpx_client.request(
+            f"v1/private/prompts/{jsonable_encoder(prompt_id)}/versions/{jsonable_encoder(version_id)}/restore",
+            method="POST",
+            request_options=request_options,
+        )
+        try:
+            if 200 <= _response.status_code < 300:
+                _data = typing.cast(
+                    PromptVersionDetail,
+                    parse_obj_as(
+                        type_=PromptVersionDetail,  # type: ignore
+                        object_=_response.json(),
+                    ),
+                )
+                return HttpResponse(response=_response, data=_data)
+            if _response.status_code == 400:
+                raise BadRequestError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        typing.Optional[typing.Any],
+                        parse_obj_as(
+                            type_=typing.Optional[typing.Any],  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            if _response.status_code == 404:
+                raise NotFoundError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        typing.Optional[typing.Any],
+                        parse_obj_as(
+                            type_=typing.Optional[typing.Any],  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            _response_json = _response.json()
+        except JSONDecodeError:
+            raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
+        raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
+
+    def retrieve_prompt_version(
+        self,
+        *,
+        name: str,
+        commit: typing.Optional[str] = OMIT,
+        environment: typing.Optional[str] = OMIT,
+        version_number: typing.Optional[str] = OMIT,
+        project_name: typing.Optional[str] = OMIT,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> HttpResponse[PromptVersionDetail]:
+        """
+        Retrieve prompt version. When project_name is supplied the lookup is scoped to that project: a prompt belonging to a different project is never matched, and an unknown project name returns 404. Legacy prompts with no project are still resolved as a deprecated fallback, signalled by the X-Opik-Deprecation response header.
 
         Parameters
         ----------
         name : str
 
         commit : typing.Optional[str]
+
+        environment : typing.Optional[str]
+            If provided, resolves to the version mapped to this environment for the prompt; mutually exclusive with commit and version_number
+
+        version_number : typing.Optional[str]
+            If provided, resolves to the version with this sequential number (e.g. v3); mutually exclusive with commit and environment
+
+        project_name : typing.Optional[str]
+            If provided, scopes the search to the specified project; prompts belonging to other projects are never matched, and an unknown project name returns 404. Legacy prompts that are not scoped to any project are still matched as a deprecated fallback, signalled by the X-Opik-Deprecation response header.
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -592,6 +1019,9 @@ class RawPromptsClient:
             json={
                 "name": name,
                 "commit": commit,
+                "environment": environment,
+                "version_number": version_number,
+                "project_name": project_name,
             },
             headers={
                 "content-type": "application/json",
@@ -647,6 +1077,131 @@ class RawPromptsClient:
             raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
         raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
 
+    def retrieve_prompt_versions_by_ids(
+        self, *, ids: typing.Sequence[str], request_options: typing.Optional[RequestOptions] = None
+    ) -> HttpResponse[typing.List[PromptVersionDetail]]:
+        """
+        Retrieve a batch of prompt versions by their ids. Typically used by the UI to resolve mask overlays.
+
+        Parameters
+        ----------
+        ids : typing.Sequence[str]
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        HttpResponse[typing.List[PromptVersionDetail]]
+            OK
+        """
+        _response = self._client_wrapper.httpx_client.request(
+            "v1/private/prompts/versions/retrieve-by-ids",
+            method="POST",
+            json={
+                "ids": ids,
+            },
+            headers={
+                "content-type": "application/json",
+            },
+            request_options=request_options,
+            omit=OMIT,
+        )
+        try:
+            if 200 <= _response.status_code < 300:
+                _data = typing.cast(
+                    typing.List[PromptVersionDetail],
+                    parse_obj_as(
+                        type_=typing.List[PromptVersionDetail],  # type: ignore
+                        object_=_response.json(),
+                    ),
+                )
+                return HttpResponse(response=_response, data=_data)
+            if _response.status_code == 400:
+                raise BadRequestError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        typing.Optional[typing.Any],
+                        parse_obj_as(
+                            type_=typing.Optional[typing.Any],  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            _response_json = _response.json()
+        except JSONDecodeError:
+            raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
+        raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
+
+    def set_prompt_version_environment(
+        self,
+        version_id: str,
+        *,
+        environments: typing.Sequence[str],
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> HttpResponse[None]:
+        """
+        Set or clear the environment owned by a prompt version.
+        Setting a non-null environment moves ownership atomically: any previous owner of that
+        environment for the same prompt has its environment cleared in the same transaction.
+        Setting null clears the environment from the version.
+        The environment must already exist in the workspace registry; unknown names return 404.
+
+        Parameters
+        ----------
+        version_id : str
+
+        environments : typing.Sequence[str]
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        HttpResponse[None]
+        """
+        _response = self._client_wrapper.httpx_client.request(
+            f"v1/private/prompts/versions/{jsonable_encoder(version_id)}/environments",
+            method="PATCH",
+            json={
+                "environments": environments,
+            },
+            headers={
+                "content-type": "application/json",
+            },
+            request_options=request_options,
+            omit=OMIT,
+        )
+        try:
+            if 200 <= _response.status_code < 300:
+                return HttpResponse(response=_response, data=None)
+            if _response.status_code == 400:
+                raise BadRequestError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        typing.Optional[typing.Any],
+                        parse_obj_as(
+                            type_=typing.Optional[typing.Any],  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            if _response.status_code == 404:
+                raise NotFoundError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        typing.Optional[typing.Any],
+                        parse_obj_as(
+                            type_=typing.Optional[typing.Any],  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            _response_json = _response.json()
+        except JSONDecodeError:
+            raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
+        raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
+
 
 class AsyncRawPromptsClient:
     def __init__(self, *, client_wrapper: AsyncClientWrapper):
@@ -658,6 +1213,9 @@ class AsyncRawPromptsClient:
         page: typing.Optional[int] = None,
         size: typing.Optional[int] = None,
         name: typing.Optional[str] = None,
+        project_id: typing.Optional[str] = None,
+        sorting: typing.Optional[str] = None,
+        filters: typing.Optional[str] = None,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> AsyncHttpResponse[PromptPagePublic]:
         """
@@ -670,6 +1228,12 @@ class AsyncRawPromptsClient:
         size : typing.Optional[int]
 
         name : typing.Optional[str]
+
+        project_id : typing.Optional[str]
+
+        sorting : typing.Optional[str]
+
+        filters : typing.Optional[str]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -686,6 +1250,9 @@ class AsyncRawPromptsClient:
                 "page": page,
                 "size": size,
                 "name": name,
+                "project_id": project_id,
+                "sorting": sorting,
+                "filters": filters,
             },
             request_options=request_options,
         )
@@ -709,11 +1276,15 @@ class AsyncRawPromptsClient:
         *,
         name: str,
         id: typing.Optional[str] = OMIT,
+        project_id: typing.Optional[str] = OMIT,
+        project_name: typing.Optional[str] = OMIT,
         description: typing.Optional[str] = OMIT,
         template: typing.Optional[str] = OMIT,
         metadata: typing.Optional[JsonNodeWrite] = OMIT,
         change_description: typing.Optional[str] = OMIT,
         type: typing.Optional[PromptWriteType] = OMIT,
+        template_structure: typing.Optional[PromptWriteTemplateStructure] = OMIT,
+        tags: typing.Optional[typing.Sequence[str]] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> AsyncHttpResponse[None]:
         """
@@ -725,6 +1296,12 @@ class AsyncRawPromptsClient:
 
         id : typing.Optional[str]
 
+        project_id : typing.Optional[str]
+            Project ID. Takes precedence over project_name when both are provided.
+
+        project_name : typing.Optional[str]
+            For project scope, specify either project_id or project_name. If project_name is provided and the project does not exist, it will be created. Ignored when project_id is provided. If neither is provided, the prompt is created at workspace level.
+
         description : typing.Optional[str]
 
         template : typing.Optional[str]
@@ -734,6 +1311,11 @@ class AsyncRawPromptsClient:
         change_description : typing.Optional[str]
 
         type : typing.Optional[PromptWriteType]
+
+        template_structure : typing.Optional[PromptWriteTemplateStructure]
+            Template structure type: 'text' or 'chat'. Immutable after creation.
+
+        tags : typing.Optional[typing.Sequence[str]]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -748,11 +1330,15 @@ class AsyncRawPromptsClient:
             json={
                 "id": id,
                 "name": name,
+                "project_id": project_id,
+                "project_name": project_name,
                 "description": description,
                 "template": template,
                 "metadata": metadata,
                 "change_description": change_description,
                 "type": type,
+                "template_structure": template_structure,
+                "tags": tags,
             },
             headers={
                 "content-type": "application/json",
@@ -802,7 +1388,14 @@ class AsyncRawPromptsClient:
         raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
 
     async def create_prompt_version(
-        self, *, name: str, version: PromptVersionDetail, request_options: typing.Optional[RequestOptions] = None
+        self,
+        *,
+        name: str,
+        version: PromptVersionDetail,
+        template_structure: typing.Optional[CreatePromptVersionDetailTemplateStructure] = OMIT,
+        project_id: typing.Optional[str] = OMIT,
+        project_name: typing.Optional[str] = OMIT,
+        request_options: typing.Optional[RequestOptions] = None,
     ) -> AsyncHttpResponse[PromptVersionDetail]:
         """
         Create prompt version
@@ -812,6 +1405,15 @@ class AsyncRawPromptsClient:
         name : str
 
         version : PromptVersionDetail
+
+        template_structure : typing.Optional[CreatePromptVersionDetailTemplateStructure]
+            Template structure for the prompt: 'text' or 'chat'. Note: This field is only used when creating a new prompt. If a prompt with the given name already exists, this field is ignored and the existing prompt's template structure is used. Template structure is immutable after prompt creation.
+
+        project_id : typing.Optional[str]
+            Project ID. Takes precedence over project_name when both are provided.
+
+        project_name : typing.Optional[str]
+            If provided, scopes the prompt to the specified project. Ignored when project_id is provided.
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -829,6 +1431,9 @@ class AsyncRawPromptsClient:
                 "version": convert_and_respect_annotation_metadata(
                     object_=version, annotation=PromptVersionDetail, direction="write"
                 ),
+                "template_structure": template_structure,
+                "project_id": project_id,
+                "project_name": project_name,
             },
             headers={
                 "content-type": "application/json",
@@ -884,15 +1489,100 @@ class AsyncRawPromptsClient:
             raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
         raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
 
+    async def update_prompt_versions(
+        self,
+        *,
+        ids: typing.Sequence[str],
+        update: PromptVersionUpdate,
+        merge_tags: typing.Optional[bool] = OMIT,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> AsyncHttpResponse[None]:
+        """
+        Update one or more prompt versions.
+
+        Note: Prompt versions are immutable by design.
+        Only organizational properties, such as tags etc., can be updated.
+        Core properties like template and metadata cannot be modified after creation.
+
+        PATCH semantics:
+        - non-empty values update the field
+        - null values preserve existing field values (no change)
+        - empty values explicitly clear the field
+
+        Parameters
+        ----------
+        ids : typing.Sequence[str]
+            IDs of prompt versions to update
+
+        update : PromptVersionUpdate
+
+        merge_tags : typing.Optional[bool]
+            Tag merge behavior:
+            - true: Add new tags to existing tags (union)
+            - false: Replace all existing tags with new tags (default behaviour if not provided)
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        AsyncHttpResponse[None]
+        """
+        _response = await self._client_wrapper.httpx_client.request(
+            "v1/private/prompts/versions",
+            method="PATCH",
+            json={
+                "ids": ids,
+                "update": convert_and_respect_annotation_metadata(
+                    object_=update, annotation=PromptVersionUpdate, direction="write"
+                ),
+                "merge_tags": merge_tags,
+            },
+            headers={
+                "content-type": "application/json",
+            },
+            request_options=request_options,
+            omit=OMIT,
+        )
+        try:
+            if 200 <= _response.status_code < 300:
+                return AsyncHttpResponse(response=_response, data=None)
+            if _response.status_code == 400:
+                raise BadRequestError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        typing.Optional[typing.Any],
+                        parse_obj_as(
+                            type_=typing.Optional[typing.Any],  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            _response_json = _response.json()
+        except JSONDecodeError:
+            raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
+        raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
+
     async def get_prompt_by_id(
-        self, id: str, *, request_options: typing.Optional[RequestOptions] = None
+        self,
+        id: str,
+        *,
+        mask_id: typing.Optional[str] = None,
+        environment: typing.Optional[str] = None,
+        request_options: typing.Optional[RequestOptions] = None,
     ) -> AsyncHttpResponse[PromptDetail]:
         """
-        Get prompt by id
+        Get prompt by id; when mask_id or environment is provided, requestedVersion is populated with the resolved version. mask_id and environment are mutually exclusive.
 
         Parameters
         ----------
         id : str
+
+        mask_id : typing.Optional[str]
+            Optional mask version id; when set, requestedVersion is the mask row for that id
+
+        environment : typing.Optional[str]
+            Optional environment name; when set, requestedVersion is the version mapped to that environment for the prompt
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -905,6 +1595,10 @@ class AsyncRawPromptsClient:
         _response = await self._client_wrapper.httpx_client.request(
             f"v1/private/prompts/{jsonable_encoder(id)}",
             method="GET",
+            params={
+                "mask_id": mask_id,
+                "environment": environment,
+            },
             request_options=request_options,
         )
         try:
@@ -917,6 +1611,17 @@ class AsyncRawPromptsClient:
                     ),
                 )
                 return AsyncHttpResponse(response=_response, data=_data)
+            if _response.status_code == 400:
+                raise BadRequestError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        typing.Optional[typing.Any],
+                        parse_obj_as(
+                            type_=typing.Optional[typing.Any],  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
             if _response.status_code == 404:
                 raise NotFoundError(
                     headers=dict(_response.headers),
@@ -939,6 +1644,7 @@ class AsyncRawPromptsClient:
         *,
         name: str,
         description: typing.Optional[str] = OMIT,
+        tags: typing.Optional[typing.Sequence[str]] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> AsyncHttpResponse[None]:
         """
@@ -951,6 +1657,8 @@ class AsyncRawPromptsClient:
         name : str
 
         description : typing.Optional[str]
+
+        tags : typing.Optional[typing.Sequence[str]]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -965,6 +1673,7 @@ class AsyncRawPromptsClient:
             json={
                 "name": name,
                 "description": description,
+                "tags": tags,
             },
             headers={
                 "content-type": "application/json",
@@ -1091,6 +1800,77 @@ class AsyncRawPromptsClient:
             raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
         raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
 
+    async def get_prompt_by_commit(
+        self, commit: str, *, request_options: typing.Optional[RequestOptions] = None
+    ) -> AsyncHttpResponse[PromptDetail]:
+        """
+        Get prompt by commit
+
+        Parameters
+        ----------
+        commit : str
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        AsyncHttpResponse[PromptDetail]
+            OK
+        """
+        _response = await self._client_wrapper.httpx_client.request(
+            f"v1/private/prompts/by-commit/{jsonable_encoder(commit)}",
+            method="GET",
+            request_options=request_options,
+        )
+        try:
+            if 200 <= _response.status_code < 300:
+                _data = typing.cast(
+                    PromptDetail,
+                    parse_obj_as(
+                        type_=PromptDetail,  # type: ignore
+                        object_=_response.json(),
+                    ),
+                )
+                return AsyncHttpResponse(response=_response, data=_data)
+            if _response.status_code == 400:
+                raise BadRequestError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        typing.Optional[typing.Any],
+                        parse_obj_as(
+                            type_=typing.Optional[typing.Any],  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            if _response.status_code == 404:
+                raise NotFoundError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        typing.Optional[typing.Any],
+                        parse_obj_as(
+                            type_=typing.Optional[typing.Any],  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            if _response.status_code == 409:
+                raise ConflictError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        typing.Optional[typing.Any],
+                        parse_obj_as(
+                            type_=typing.Optional[typing.Any],  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            _response_json = _response.json()
+        except JSONDecodeError:
+            raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
+        raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
+
     async def get_prompt_version_by_id(
         self, version_id: str, *, request_options: typing.Optional[RequestOptions] = None
     ) -> AsyncHttpResponse[PromptVersionDetail]:
@@ -1140,12 +1920,77 @@ class AsyncRawPromptsClient:
             raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
         raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
 
+    async def get_prompt_version_by_number(
+        self, prompt_id: str, version_number: str, *, request_options: typing.Optional[RequestOptions] = None
+    ) -> AsyncHttpResponse[PromptVersionDetail]:
+        """
+        Get a prompt version by its sequential v<N> number for the given prompt.
+
+        Parameters
+        ----------
+        prompt_id : str
+
+        version_number : str
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        AsyncHttpResponse[PromptVersionDetail]
+            Prompt version resource
+        """
+        _response = await self._client_wrapper.httpx_client.request(
+            f"v1/private/prompts/{jsonable_encoder(prompt_id)}/versions/by-number/{jsonable_encoder(version_number)}",
+            method="GET",
+            request_options=request_options,
+        )
+        try:
+            if 200 <= _response.status_code < 300:
+                _data = typing.cast(
+                    PromptVersionDetail,
+                    parse_obj_as(
+                        type_=PromptVersionDetail,  # type: ignore
+                        object_=_response.json(),
+                    ),
+                )
+                return AsyncHttpResponse(response=_response, data=_data)
+            if _response.status_code == 400:
+                raise BadRequestError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        typing.Optional[typing.Any],
+                        parse_obj_as(
+                            type_=typing.Optional[typing.Any],  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            if _response.status_code == 404:
+                raise NotFoundError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        typing.Optional[typing.Any],
+                        parse_obj_as(
+                            type_=typing.Optional[typing.Any],  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            _response_json = _response.json()
+        except JSONDecodeError:
+            raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
+        raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
+
     async def get_prompt_versions(
         self,
         id: str,
         *,
         page: typing.Optional[int] = None,
         size: typing.Optional[int] = None,
+        search: typing.Optional[str] = None,
+        sorting: typing.Optional[str] = None,
+        filters: typing.Optional[str] = None,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> AsyncHttpResponse[PromptVersionPagePublic]:
         """
@@ -1158,6 +2003,13 @@ class AsyncRawPromptsClient:
         page : typing.Optional[int]
 
         size : typing.Optional[int]
+
+        search : typing.Optional[str]
+            Search text to find in template or change description fields
+
+        sorting : typing.Optional[str]
+
+        filters : typing.Optional[str]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -1173,6 +2025,9 @@ class AsyncRawPromptsClient:
             params={
                 "page": page,
                 "size": size,
+                "search": search,
+                "sorting": sorting,
+                "filters": filters,
             },
             request_options=request_options,
         )
@@ -1191,17 +2046,140 @@ class AsyncRawPromptsClient:
             raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
         raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
 
-    async def retrieve_prompt_version(
-        self, *, name: str, commit: typing.Optional[str] = OMIT, request_options: typing.Optional[RequestOptions] = None
+    async def get_prompts_by_commits(
+        self, *, commits: typing.Sequence[str], request_options: typing.Optional[RequestOptions] = None
+    ) -> AsyncHttpResponse[typing.List[PromptVersionLinkPublic]]:
+        """
+        Get prompts by prompt version commits
+
+        Parameters
+        ----------
+        commits : typing.Sequence[str]
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        AsyncHttpResponse[typing.List[PromptVersionLinkPublic]]
+            OK
+        """
+        _response = await self._client_wrapper.httpx_client.request(
+            "v1/private/prompts/retrieve-by-commits",
+            method="POST",
+            json={
+                "commits": commits,
+            },
+            headers={
+                "content-type": "application/json",
+            },
+            request_options=request_options,
+            omit=OMIT,
+        )
+        try:
+            if 200 <= _response.status_code < 300:
+                _data = typing.cast(
+                    typing.List[PromptVersionLinkPublic],
+                    parse_obj_as(
+                        type_=typing.List[PromptVersionLinkPublic],  # type: ignore
+                        object_=_response.json(),
+                    ),
+                )
+                return AsyncHttpResponse(response=_response, data=_data)
+            _response_json = _response.json()
+        except JSONDecodeError:
+            raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
+        raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
+
+    async def restore_prompt_version(
+        self, prompt_id: str, version_id: str, *, request_options: typing.Optional[RequestOptions] = None
     ) -> AsyncHttpResponse[PromptVersionDetail]:
         """
-        Retrieve prompt version
+        Restore a prompt version by creating a new version with the content from the specified version
+
+        Parameters
+        ----------
+        prompt_id : str
+
+        version_id : str
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        AsyncHttpResponse[PromptVersionDetail]
+            OK
+        """
+        _response = await self._client_wrapper.httpx_client.request(
+            f"v1/private/prompts/{jsonable_encoder(prompt_id)}/versions/{jsonable_encoder(version_id)}/restore",
+            method="POST",
+            request_options=request_options,
+        )
+        try:
+            if 200 <= _response.status_code < 300:
+                _data = typing.cast(
+                    PromptVersionDetail,
+                    parse_obj_as(
+                        type_=PromptVersionDetail,  # type: ignore
+                        object_=_response.json(),
+                    ),
+                )
+                return AsyncHttpResponse(response=_response, data=_data)
+            if _response.status_code == 400:
+                raise BadRequestError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        typing.Optional[typing.Any],
+                        parse_obj_as(
+                            type_=typing.Optional[typing.Any],  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            if _response.status_code == 404:
+                raise NotFoundError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        typing.Optional[typing.Any],
+                        parse_obj_as(
+                            type_=typing.Optional[typing.Any],  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            _response_json = _response.json()
+        except JSONDecodeError:
+            raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
+        raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
+
+    async def retrieve_prompt_version(
+        self,
+        *,
+        name: str,
+        commit: typing.Optional[str] = OMIT,
+        environment: typing.Optional[str] = OMIT,
+        version_number: typing.Optional[str] = OMIT,
+        project_name: typing.Optional[str] = OMIT,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> AsyncHttpResponse[PromptVersionDetail]:
+        """
+        Retrieve prompt version. When project_name is supplied the lookup is scoped to that project: a prompt belonging to a different project is never matched, and an unknown project name returns 404. Legacy prompts with no project are still resolved as a deprecated fallback, signalled by the X-Opik-Deprecation response header.
 
         Parameters
         ----------
         name : str
 
         commit : typing.Optional[str]
+
+        environment : typing.Optional[str]
+            If provided, resolves to the version mapped to this environment for the prompt; mutually exclusive with commit and version_number
+
+        version_number : typing.Optional[str]
+            If provided, resolves to the version with this sequential number (e.g. v3); mutually exclusive with commit and environment
+
+        project_name : typing.Optional[str]
+            If provided, scopes the search to the specified project; prompts belonging to other projects are never matched, and an unknown project name returns 404. Legacy prompts that are not scoped to any project are still matched as a deprecated fallback, signalled by the X-Opik-Deprecation response header.
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -1217,6 +2195,9 @@ class AsyncRawPromptsClient:
             json={
                 "name": name,
                 "commit": commit,
+                "environment": environment,
+                "version_number": version_number,
+                "project_name": project_name,
             },
             headers={
                 "content-type": "application/json",
@@ -1258,6 +2239,131 @@ class AsyncRawPromptsClient:
                 )
             if _response.status_code == 422:
                 raise UnprocessableEntityError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        typing.Optional[typing.Any],
+                        parse_obj_as(
+                            type_=typing.Optional[typing.Any],  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            _response_json = _response.json()
+        except JSONDecodeError:
+            raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
+        raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
+
+    async def retrieve_prompt_versions_by_ids(
+        self, *, ids: typing.Sequence[str], request_options: typing.Optional[RequestOptions] = None
+    ) -> AsyncHttpResponse[typing.List[PromptVersionDetail]]:
+        """
+        Retrieve a batch of prompt versions by their ids. Typically used by the UI to resolve mask overlays.
+
+        Parameters
+        ----------
+        ids : typing.Sequence[str]
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        AsyncHttpResponse[typing.List[PromptVersionDetail]]
+            OK
+        """
+        _response = await self._client_wrapper.httpx_client.request(
+            "v1/private/prompts/versions/retrieve-by-ids",
+            method="POST",
+            json={
+                "ids": ids,
+            },
+            headers={
+                "content-type": "application/json",
+            },
+            request_options=request_options,
+            omit=OMIT,
+        )
+        try:
+            if 200 <= _response.status_code < 300:
+                _data = typing.cast(
+                    typing.List[PromptVersionDetail],
+                    parse_obj_as(
+                        type_=typing.List[PromptVersionDetail],  # type: ignore
+                        object_=_response.json(),
+                    ),
+                )
+                return AsyncHttpResponse(response=_response, data=_data)
+            if _response.status_code == 400:
+                raise BadRequestError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        typing.Optional[typing.Any],
+                        parse_obj_as(
+                            type_=typing.Optional[typing.Any],  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            _response_json = _response.json()
+        except JSONDecodeError:
+            raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
+        raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
+
+    async def set_prompt_version_environment(
+        self,
+        version_id: str,
+        *,
+        environments: typing.Sequence[str],
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> AsyncHttpResponse[None]:
+        """
+        Set or clear the environment owned by a prompt version.
+        Setting a non-null environment moves ownership atomically: any previous owner of that
+        environment for the same prompt has its environment cleared in the same transaction.
+        Setting null clears the environment from the version.
+        The environment must already exist in the workspace registry; unknown names return 404.
+
+        Parameters
+        ----------
+        version_id : str
+
+        environments : typing.Sequence[str]
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        AsyncHttpResponse[None]
+        """
+        _response = await self._client_wrapper.httpx_client.request(
+            f"v1/private/prompts/versions/{jsonable_encoder(version_id)}/environments",
+            method="PATCH",
+            json={
+                "environments": environments,
+            },
+            headers={
+                "content-type": "application/json",
+            },
+            request_options=request_options,
+            omit=OMIT,
+        )
+        try:
+            if 200 <= _response.status_code < 300:
+                return AsyncHttpResponse(response=_response, data=None)
+            if _response.status_code == 400:
+                raise BadRequestError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        typing.Optional[typing.Any],
+                        parse_obj_as(
+                            type_=typing.Optional[typing.Any],  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            if _response.status_code == 404:
+                raise NotFoundError(
                     headers=dict(_response.headers),
                     body=typing.cast(
                         typing.Optional[typing.Any],

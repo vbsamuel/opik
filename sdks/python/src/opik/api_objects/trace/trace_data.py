@@ -1,11 +1,11 @@
 import dataclasses
 import datetime
-import logging
 from typing import Any, Dict, List, Optional, Union
 
-from opik import dict_utils, Attachment
-from .. import span
-from opik import datetime_helpers, id_helpers, llm_usage
+import opik.api_objects.attachment as attachment
+import opik.datetime_helpers as datetime_helpers
+import opik.id_helpers as id_helpers
+import opik.llm_usage as llm_usage
 from opik.types import (
     CreatedByType,
     ErrorInfoDict,
@@ -13,39 +13,19 @@ from opik.types import (
     LLMProvider,
     SpanType,
 )
+from .. import span
+from ..observation_data import ObservationData
 
-LOGGER = logging.getLogger(__name__)
 
-
-# Engineer note:
-#
-# After moving to minimal python version 3.10, a lot of common content
-# from SpanData and TraceData can be moved to ObservationData parent dataclass.
-# Before that it's impossible because of the dataclasses limitation to have optional arguments
-# strictly after positional ones (including the attributes from the parent class).
-# In python 3.10 @dataclass(kw_only=True) should help.
 @dataclasses.dataclass
-class TraceData:
+class TraceData(ObservationData):
     """
     The TraceData object is returned when calling :func:`opik.opik_context.get_current_trace_data` from a tracked function.
     """
 
     id: str = dataclasses.field(default_factory=id_helpers.generate_id)
-    name: Optional[str] = None
-    start_time: Optional[datetime.datetime] = dataclasses.field(
-        default_factory=datetime_helpers.local_timestamp
-    )
-    end_time: Optional[datetime.datetime] = None
-    metadata: Optional[Dict[str, Any]] = None
-    input: Optional[Dict[str, Any]] = None
-    output: Optional[Dict[str, Any]] = None
-    tags: Optional[List[str]] = None
-    feedback_scores: Optional[List[FeedbackScoreDict]] = None
-    project_name: Optional[str] = None
     created_by: Optional[CreatedByType] = None
-    error_info: Optional[ErrorInfoDict] = None
     thread_id: Optional[str] = None
-    attachments: Optional[List[Attachment]] = None
 
     def create_child_span_data(
         self,
@@ -63,7 +43,7 @@ class TraceData:
         provider: Optional[Union[str, LLMProvider]] = None,
         error_info: Optional[ErrorInfoDict] = None,
         total_cost: Optional[float] = None,
-        attachments: Optional[List[Attachment]] = None,
+        attachments: Optional[List[attachment.Attachment]] = None,
     ) -> span.SpanData:
         start_time = (
             start_time if start_time is not None else datetime_helpers.local_timestamp()
@@ -87,64 +67,9 @@ class TraceData:
             error_info=error_info,
             total_cost=total_cost,
             attachments=attachments,
+            source=self.source,
+            environment=self.environment,
         )
-
-    def update(self, **new_data: Any) -> "TraceData":
-        for key, value in new_data.items():
-            if value is None:
-                continue
-
-            if key not in self.__dict__:
-                LOGGER.debug(
-                    "An attempt to update span with parameter name it doesn't have: %s",
-                    key,
-                )
-                continue
-
-            if key == "metadata":
-                self._update_metadata(value)
-                continue
-            elif key == "output":
-                self._update_output(value)
-                continue
-            elif key == "input":
-                self._update_input(value)
-                continue
-            elif key == "attachments":
-                self._update_attachments(value)
-                continue
-
-            self.__dict__[key] = value
-
-        return self
-
-    def _update_metadata(self, new_metadata: Dict[str, Any]) -> None:
-        if self.metadata is None:
-            self.metadata = new_metadata
-        else:
-            self.metadata = dict_utils.deepmerge(self.metadata, new_metadata)
-
-    def _update_output(self, new_output: Dict[str, Any]) -> None:
-        if self.output is None:
-            self.output = new_output
-        else:
-            self.output = dict_utils.deepmerge(self.output, new_output)
-
-    def _update_input(self, new_input: Dict[str, Any]) -> None:
-        if self.input is None:
-            self.input = new_input
-        else:
-            self.input = dict_utils.deepmerge(self.input, new_input)
-
-    def init_end_time(self) -> "TraceData":
-        self.end_time = datetime_helpers.local_timestamp()
-        return self
-
-    def _update_attachments(self, attachments: List[Attachment]) -> None:
-        if self.attachments is None:
-            self.attachments = attachments
-        else:
-            self.attachments.extend(attachments)
 
     @property
     def as_start_parameters(self) -> Dict[str, Any]:
@@ -153,6 +78,7 @@ class TraceData:
             "id": self.id,
             "start_time": self.start_time,
             "project_name": self.project_name,
+            "source": self.source,
         }
         if self.name is not None:
             start_parameters["name"] = self.name
@@ -162,6 +88,8 @@ class TraceData:
             start_parameters["metadata"] = self.metadata
         if self.tags is not None:
             start_parameters["tags"] = self.tags
+        if self.environment is not None:
+            start_parameters["environment"] = self.environment
 
         return start_parameters
 
@@ -182,4 +110,6 @@ class TraceData:
             "error_info": self.error_info,
             "thread_id": self.thread_id,
             "attachments": self.attachments,
+            "source": self.source,
+            "environment": self.environment,
         }

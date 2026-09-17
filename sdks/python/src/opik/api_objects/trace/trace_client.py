@@ -2,10 +2,13 @@ import datetime
 import logging
 from typing import Any, Dict, List, Optional, Union
 
-from opik import datetime_helpers, llm_usage, Attachment
+import opik.datetime_helpers as datetime_helpers
+import opik.llm_usage as llm_usage
+import opik.api_objects.attachment as attachment
 from opik.message_processing import messages, streamer
-from opik.types import ErrorInfoDict, SpanType, LLMProvider
-from .. import constants, span
+from opik import config as opik_config
+from opik.types import ErrorInfoDict, SpanType, LLMProvider, TraceSource
+from .. import constants, helpers, span
 
 LOGGER = logging.getLogger(__name__)
 
@@ -17,6 +20,9 @@ class Trace:
         message_streamer: streamer.Streamer,
         project_name: str,
         url_override: str,
+        source: TraceSource,
+        config: opik_config.OpikConfig,
+        environment: Optional[str] = None,
     ):
         """
         A Trace object. This object should not be created directly, instead use :meth:`opik.Opik.trace` to create a new trace.
@@ -25,6 +31,9 @@ class Trace:
         self._streamer = message_streamer
         self._project_name = project_name
         self._url_override = url_override
+        self.source = source
+        self._config = config
+        self._environment = environment
 
     def end(
         self,
@@ -41,6 +50,11 @@ class Trace:
 
         This method is similar to the `update` method, but it automatically computes
         the end time if not provided.
+
+        Note: with batching enabled, calling this shortly after trace creation may
+        cause data loss. An alternative is to re-send a full payload via
+        ``client.trace()`` with the same ID — the backend will overwrite the
+        previous value. See https://www.comet.com/docs/opik/reference/python-sdk/troubleshooting/batching-and-updates
 
         Args:
             end_time: The end time of the trace. If not provided, the current time will be used.
@@ -59,7 +73,13 @@ class Trace:
             end_time if end_time is not None else datetime_helpers.local_timestamp()
         )
 
-        self.update(
+        helpers.warn_if_batching_update(
+            use_batching=self._streamer.use_batching,
+            suppress_warning=self._config.suppress_batching_update_warning,
+            method_name="Trace.end()",
+        )
+
+        self._update(
             end_time=end_time,
             metadata=metadata,
             input=input,
@@ -82,6 +102,11 @@ class Trace:
         """
         Update the trace attributes.
 
+        Note: with batching enabled, calling this shortly after trace creation may
+        cause data loss. An alternative is to re-send a full payload via
+        ``client.trace()`` with the same ID — the backend will overwrite the
+        previous value. See https://www.comet.com/docs/opik/reference/python-sdk/troubleshooting/batching-and-updates
+
         Args:
             end_time: The end time of the trace.
             metadata: Additional metadata to be associated with the trace.
@@ -95,9 +120,13 @@ class Trace:
         Returns:
             None
         """
-        update_trace_message = messages.UpdateTraceMessage(
-            trace_id=self.id,
-            project_name=self._project_name,
+        helpers.warn_if_batching_update(
+            use_batching=self._streamer.use_batching,
+            suppress_warning=self._config.suppress_batching_update_warning,
+            method_name="Trace.update()",
+        )
+
+        self._update(
             end_time=end_time,
             metadata=metadata,
             input=input,
@@ -106,7 +135,31 @@ class Trace:
             error_info=error_info,
             thread_id=thread_id,
         )
-        self._streamer.put(update_trace_message)
+
+    def _update(
+        self,
+        end_time: Optional[datetime.datetime] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        input: Optional[Dict[str, Any]] = None,
+        output: Optional[Dict[str, Any]] = None,
+        tags: Optional[List[Any]] = None,
+        error_info: Optional[ErrorInfoDict] = None,
+        thread_id: Optional[str] = None,
+    ) -> None:
+        update_trace(
+            trace_id=self.id,
+            project_name=self._project_name,
+            message_streamer=self._streamer,
+            end_time=end_time,
+            metadata=metadata,
+            input=input,
+            output=output,
+            tags=tags,
+            error_info=error_info,
+            thread_id=thread_id,
+            source=self.source,
+            environment=self._environment,
+        )
 
     def span(
         self,
@@ -125,7 +178,7 @@ class Trace:
         provider: Optional[Union[LLMProvider, str]] = None,
         error_info: Optional[ErrorInfoDict] = None,
         total_cost: Optional[float] = None,
-        attachments: Optional[List[Attachment]] = None,
+        attachments: Optional[List[attachment.Attachment]] = None,
     ) -> span.Span:
         """
         Create a new span within the trace.
@@ -177,6 +230,9 @@ class Trace:
             error_info=error_info,
             total_cost=total_cost,
             attachments=attachments,
+            source=self.source,
+            config=self._config,
+            environment=self._environment,
         )
 
     def log_feedback_score(
@@ -213,3 +269,58 @@ class Trace:
         )
 
         self._streamer.put(add_trace_feedback_batch_message)
+
+
+def update_trace(
+    trace_id: str,
+    project_name: str,
+    message_streamer: streamer.Streamer,
+    source: TraceSource,
+    end_time: Optional[datetime.datetime] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+    input: Optional[Dict[str, Any]] = None,
+    output: Optional[Dict[str, Any]] = None,
+    tags: Optional[List[Any]] = None,
+    error_info: Optional[ErrorInfoDict] = None,
+    thread_id: Optional[str] = None,
+    environment: Optional[str] = None,
+) -> None:
+    """
+    Update an existing trace with new information.
+    This function sends an UpdateTraceMessage to the provided message_streamer,
+    allowing you to update various fields of a trace, such as its end time,
+    metadata, input, output, tags, error information and thread association.
+
+    Args:
+        trace_id: The unique identifier of the trace to update.
+        project_name: The name of the project associated with the trace.
+        message_streamer: The message streamer used to send the update.
+        end_time: The end time of the trace. Defaults to None.
+        metadata: Additional metadata for the trace. Defaults to None.
+        input: Input data associated with the trace. Defaults to None.
+        output: Output data associated with the trace. Defaults to None.
+        tags: List of tags to associate with the trace. Defaults to None.
+        error_info: Error information related to the trace. Defaults to None.
+        thread_id : The thread ID associated with the trace. Defaults to None.
+        source: The source of the update. This can be either "sdk", "experiment", "optimization".
+    Returns:
+        None
+    Usage Notes:
+        - This function does not return a value; it sends an update message to the message streamer.
+        - All parameters except trace_id, project_name and message_streamer are optional.
+        - Only the fields provided will be updated in the trace.
+    """
+    update_trace_message = messages.UpdateTraceMessage(
+        trace_id=trace_id,
+        project_name=project_name,
+        end_time=end_time,
+        metadata=metadata,
+        input=input,
+        output=output,
+        tags=tags,
+        error_info=error_info,
+        thread_id=thread_id,
+        source=source,
+        environment=environment,
+    )
+    message_streamer.put(update_trace_message)

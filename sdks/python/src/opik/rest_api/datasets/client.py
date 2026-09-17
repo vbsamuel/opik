@@ -4,15 +4,34 @@ import typing
 
 from ..core.client_wrapper import AsyncClientWrapper, SyncClientWrapper
 from ..core.request_options import RequestOptions
+from ..types.dataset_expansion_response import DatasetExpansionResponse
+from ..types.dataset_export_job_public import DatasetExportJobPublic
+from ..types.dataset_item_changes_public import DatasetItemChangesPublic
+from ..types.dataset_item_filter import DatasetItemFilter
 from ..types.dataset_item_page_compare import DatasetItemPageCompare
 from ..types.dataset_item_page_public import DatasetItemPagePublic
 from ..types.dataset_item_public import DatasetItemPublic
+from ..types.dataset_item_update import DatasetItemUpdate
 from ..types.dataset_item_write import DatasetItemWrite
+from ..types.dataset_item_write_source import DatasetItemWriteSource
 from ..types.dataset_page_public import DatasetPagePublic
 from ..types.dataset_public import DatasetPublic
+from ..types.dataset_version_diff import DatasetVersionDiff
+from ..types.dataset_version_page_public import DatasetVersionPagePublic
+from ..types.dataset_version_public import DatasetVersionPublic
+from ..types.evaluator_item import EvaluatorItem
+from ..types.evaluator_item_write import EvaluatorItemWrite
+from ..types.execution_policy import ExecutionPolicy
+from ..types.execution_policy_write import ExecutionPolicyWrite
+from ..types.json_node import JsonNode
 from ..types.page_columns import PageColumns
+from ..types.project_stats_public import ProjectStatsPublic
+from ..types.span_enrichment_options import SpanEnrichmentOptions
+from ..types.trace_enrichment_options import TraceEnrichmentOptions
 from .raw_client import AsyncRawDatasetsClient, RawDatasetsClient
+from .types.create_dataset_items_from_json_request_format import CreateDatasetItemsFromJsonRequestFormat
 from .types.dataset_update_visibility import DatasetUpdateVisibility
+from .types.dataset_write_type import DatasetWriteType
 from .types.dataset_write_visibility import DatasetWriteVisibility
 
 # this is used as the default value for optional parameters
@@ -34,6 +53,109 @@ class DatasetsClient:
         """
         return self._raw_client
 
+    def apply_dataset_item_changes(
+        self,
+        id: str,
+        *,
+        request: DatasetItemChangesPublic,
+        override: typing.Optional[bool] = None,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> DatasetVersionPublic:
+        """
+        Apply delta changes (add, edit, delete) to a dataset version with conflict detection.
+
+        This endpoint:
+        - Creates a new version with the applied changes
+        - Validates that baseVersion matches the latest version (unless override=true)
+        - Returns 409 Conflict if baseVersion is stale and override is not set
+
+        Use `override=true` query parameter to force version creation even with stale baseVersion.
+
+        Set 'copy_from_dataset_id' and 'copy_from_version_id' together on the request body to read
+        carry-forward rows from the supplied (dataset, version) pair instead of the destination's
+        prior version. When the fields are null, carry-forward rows are read from the destination's
+        prior version.
+
+        Parameters
+        ----------
+        id : str
+
+        request : DatasetItemChangesPublic
+
+        override : typing.Optional[bool]
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        DatasetVersionPublic
+            Version created successfully
+
+        Examples
+        --------
+        from Opik import OpikApi
+        client = OpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        client.datasets.apply_dataset_item_changes(id='id', request={'key': 'value'
+        }, )
+        """
+        _response = self._raw_client.apply_dataset_item_changes(
+            id, request=request, override=override, request_options=request_options
+        )
+        return _response.data
+
+    def batch_update_dataset_items(
+        self,
+        *,
+        update: DatasetItemUpdate,
+        ids: typing.Optional[typing.Sequence[str]] = OMIT,
+        filters: typing.Optional[typing.Sequence[DatasetItemFilter]] = OMIT,
+        dataset_id: typing.Optional[str] = OMIT,
+        merge_tags: typing.Optional[bool] = OMIT,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> None:
+        """
+        Update multiple dataset items
+
+        Parameters
+        ----------
+        update : DatasetItemUpdate
+
+        ids : typing.Optional[typing.Sequence[str]]
+            List of dataset item IDs to update (max 1000). Mutually exclusive with 'filters'.
+
+        filters : typing.Optional[typing.Sequence[DatasetItemFilter]]
+
+        dataset_id : typing.Optional[str]
+            Dataset ID. Required when using 'filters', optional when using 'ids'.
+
+        merge_tags : typing.Optional[bool]
+            If true, merge tags with existing tags instead of replacing them. Default: false. When using 'filters', this is automatically set to true.
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        None
+
+        Examples
+        --------
+        from Opik import OpikApi
+        from Opik import DatasetItemUpdate
+        client = OpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        client.datasets.batch_update_dataset_items(update=DatasetItemUpdate(), )
+        """
+        _response = self._raw_client.batch_update_dataset_items(
+            update=update,
+            ids=ids,
+            filters=filters,
+            dataset_id=dataset_id,
+            merge_tags=merge_tags,
+            request_options=request_options,
+        )
+        return _response.data
+
     def find_datasets(
         self,
         *,
@@ -42,8 +164,10 @@ class DatasetsClient:
         with_experiments_only: typing.Optional[bool] = None,
         with_optimizations_only: typing.Optional[bool] = None,
         prompt_id: typing.Optional[str] = None,
+        project_id: typing.Optional[str] = None,
         name: typing.Optional[str] = None,
         sorting: typing.Optional[str] = None,
+        filters: typing.Optional[str] = None,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> DatasetPagePublic:
         """
@@ -61,9 +185,13 @@ class DatasetsClient:
 
         prompt_id : typing.Optional[str]
 
+        project_id : typing.Optional[str]
+
         name : typing.Optional[str]
 
         sorting : typing.Optional[str]
+
+        filters : typing.Optional[str]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -85,8 +213,10 @@ class DatasetsClient:
             with_experiments_only=with_experiments_only,
             with_optimizations_only=with_optimizations_only,
             prompt_id=prompt_id,
+            project_id=project_id,
             name=name,
             sorting=sorting,
+            filters=filters,
             request_options=request_options,
         )
         return _response.data
@@ -96,7 +226,11 @@ class DatasetsClient:
         *,
         name: str,
         id: typing.Optional[str] = OMIT,
+        project_id: typing.Optional[str] = OMIT,
+        project_name: typing.Optional[str] = OMIT,
+        type: typing.Optional[DatasetWriteType] = OMIT,
         visibility: typing.Optional[DatasetWriteVisibility] = OMIT,
+        tags: typing.Optional[typing.Sequence[str]] = OMIT,
         description: typing.Optional[str] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> None:
@@ -109,7 +243,17 @@ class DatasetsClient:
 
         id : typing.Optional[str]
 
+        project_id : typing.Optional[str]
+            Project ID. Takes precedence over project_name when both are provided.
+
+        project_name : typing.Optional[str]
+            For project scope, specify either project_id or project_name. If project_name is provided and the project does not exist, it will be created. Ignored when project_id is provided. If neither is provided, the dataset is created at workspace level.
+
+        type : typing.Optional[DatasetWriteType]
+
         visibility : typing.Optional[DatasetWriteVisibility]
+
+        tags : typing.Optional[typing.Sequence[str]]
 
         description : typing.Optional[str]
 
@@ -127,7 +271,15 @@ class DatasetsClient:
         client.datasets.create_dataset(name='name', )
         """
         _response = self._raw_client.create_dataset(
-            name=name, id=id, visibility=visibility, description=description, request_options=request_options
+            name=name,
+            id=id,
+            project_id=project_id,
+            project_name=project_name,
+            type=type,
+            visibility=visibility,
+            tags=tags,
+            description=description,
+            request_options=request_options,
         )
         return _response.data
 
@@ -137,10 +289,21 @@ class DatasetsClient:
         items: typing.Sequence[DatasetItemWrite],
         dataset_name: typing.Optional[str] = OMIT,
         dataset_id: typing.Optional[str] = OMIT,
+        project_name: typing.Optional[str] = OMIT,
+        project_id: typing.Optional[str] = OMIT,
+        batch_group_id: typing.Optional[str] = OMIT,
+        copy_from_dataset_id: typing.Optional[str] = OMIT,
+        copy_from_version_id: typing.Optional[str] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> None:
         """
-        Create/update dataset items based on dataset item id
+        Create/update dataset items based on dataset item id.
+        Each item's 'id' field is the stable identifier and upsert key.
+        Provide it to update an existing item, or omit it to create a new one.
+
+        Set 'copy_from_dataset_id' and 'copy_from_version_id' together to read carry-forward rows
+        from the supplied (dataset, version) pair instead of the destination's prior version. When
+        the fields are null, carry-forward rows are read from the destination's prior version.
 
         Parameters
         ----------
@@ -151,6 +314,21 @@ class DatasetsClient:
 
         dataset_id : typing.Optional[str]
             If null, dataset_name must be provided
+
+        project_name : typing.Optional[str]
+            Optional. Associates the batch with a project by name. Ignored if project_id is provided.
+
+        project_id : typing.Optional[str]
+            Optional. Associates the batch with a project by ID. Takes precedence over project_name.
+
+        batch_group_id : typing.Optional[str]
+            Optional batch group ID to group multiple batches into a single dataset version. If null, mutates the latest version instead of creating a new one.
+
+        copy_from_dataset_id : typing.Optional[str]
+            Optional. Dataset to read carry-forward rows from when materializing the new version. Required together with copy_from_version_id. When null, carry-forward rows are read from the destination dataset's prior version.
+
+        copy_from_version_id : typing.Optional[str]
+            Optional. Version within copy_from_dataset_id to read carry-forward rows from. Required together with copy_from_dataset_id.
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -168,7 +346,195 @@ class DatasetsClient:
         }, )], )
         """
         _response = self._raw_client.create_or_update_dataset_items(
-            items=items, dataset_name=dataset_name, dataset_id=dataset_id, request_options=request_options
+            items=items,
+            dataset_name=dataset_name,
+            dataset_id=dataset_id,
+            project_name=project_name,
+            project_id=project_id,
+            batch_group_id=batch_group_id,
+            copy_from_dataset_id=copy_from_dataset_id,
+            copy_from_version_id=copy_from_version_id,
+            request_options=request_options,
+        )
+        return _response.data
+
+    def create_dataset_items_from_csv(
+        self,
+        *,
+        file: typing.Dict[str, typing.Optional[typing.Any]],
+        dataset_id: str,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> None:
+        """
+        Create dataset items from uploaded CSV file. CSV should have headers in the first row. Processing happens asynchronously in batches.
+
+        Parameters
+        ----------
+        file : typing.Dict[str, typing.Optional[typing.Any]]
+
+        dataset_id : str
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        None
+
+        Examples
+        --------
+        from Opik import OpikApi
+        client = OpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        client.datasets.create_dataset_items_from_csv(file={'key': 'value'
+        }, dataset_id='dataset_id', )
+        """
+        _response = self._raw_client.create_dataset_items_from_csv(
+            file=file, dataset_id=dataset_id, request_options=request_options
+        )
+        return _response.data
+
+    def create_dataset_items_from_json(
+        self,
+        *,
+        file: typing.Dict[str, typing.Optional[typing.Any]],
+        dataset_id: str,
+        format: CreateDatasetItemsFromJsonRequestFormat,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> None:
+        """
+        Create dataset items from an uploaded JSON or JSONL file. JSON files must contain a top-level array of objects.
+        JSONL files contain one JSON object per non-blank line; multi-line JSON objects are not supported.
+        Reserved keys (id, source, description, tags, evaluators, execution_policy) are extracted into the
+        corresponding DatasetItem fields; all remaining keys form the item's data map and preserve their JSON types.
+        To link dataset items to specific traces or spans use the dedicated /items/from-traces or /items/from-spans endpoints.
+        Processing happens asynchronously in batches. With dataset versioning enabled, a supplied id acts as an upsert key.
+
+        Parameters
+        ----------
+        file : typing.Dict[str, typing.Optional[typing.Any]]
+
+        dataset_id : str
+
+        format : CreateDatasetItemsFromJsonRequestFormat
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        None
+
+        Examples
+        --------
+        from Opik import OpikApi
+        client = OpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        client.datasets.create_dataset_items_from_json(file={'key': 'value'
+        }, dataset_id='dataset_id', format="json", )
+        """
+        _response = self._raw_client.create_dataset_items_from_json(
+            file=file, dataset_id=dataset_id, format=format, request_options=request_options
+        )
+        return _response.data
+
+    def create_dataset_items_from_spans(
+        self,
+        dataset_id: str,
+        *,
+        span_ids: typing.Sequence[str],
+        enrichment_options: SpanEnrichmentOptions,
+        evaluators: typing.Optional[typing.Sequence[EvaluatorItem]] = OMIT,
+        execution_policy: typing.Optional[ExecutionPolicy] = OMIT,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> None:
+        """
+        Create dataset items from spans with enriched metadata
+
+        Parameters
+        ----------
+        dataset_id : str
+
+        span_ids : typing.Sequence[str]
+            Set of span IDs to add to the dataset
+
+        enrichment_options : SpanEnrichmentOptions
+
+        evaluators : typing.Optional[typing.Sequence[EvaluatorItem]]
+            Optional evaluators to apply to the created items
+
+        execution_policy : typing.Optional[ExecutionPolicy]
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        None
+
+        Examples
+        --------
+        from Opik import OpikApi
+        from Opik import SpanEnrichmentOptions
+        client = OpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        client.datasets.create_dataset_items_from_spans(dataset_id='dataset_id', span_ids=['span_ids'], enrichment_options=SpanEnrichmentOptions(), )
+        """
+        _response = self._raw_client.create_dataset_items_from_spans(
+            dataset_id,
+            span_ids=span_ids,
+            enrichment_options=enrichment_options,
+            evaluators=evaluators,
+            execution_policy=execution_policy,
+            request_options=request_options,
+        )
+        return _response.data
+
+    def create_dataset_items_from_traces(
+        self,
+        dataset_id: str,
+        *,
+        trace_ids: typing.Sequence[str],
+        enrichment_options: TraceEnrichmentOptions,
+        evaluators: typing.Optional[typing.Sequence[EvaluatorItem]] = OMIT,
+        execution_policy: typing.Optional[ExecutionPolicy] = OMIT,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> None:
+        """
+        Create dataset items from traces with enriched metadata
+
+        Parameters
+        ----------
+        dataset_id : str
+
+        trace_ids : typing.Sequence[str]
+            Set of trace IDs to add to the dataset
+
+        enrichment_options : TraceEnrichmentOptions
+
+        evaluators : typing.Optional[typing.Sequence[EvaluatorItem]]
+            Optional evaluators to apply to the created items
+
+        execution_policy : typing.Optional[ExecutionPolicy]
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        None
+
+        Examples
+        --------
+        from Opik import OpikApi
+        from Opik import TraceEnrichmentOptions
+        client = OpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        client.datasets.create_dataset_items_from_traces(dataset_id='dataset_id', trace_ids=['trace_ids'], enrichment_options=TraceEnrichmentOptions(), )
+        """
+        _response = self._raw_client.create_dataset_items_from_traces(
+            dataset_id,
+            trace_ids=trace_ids,
+            enrichment_options=enrichment_options,
+            evaluators=evaluators,
+            execution_policy=execution_policy,
+            request_options=request_options,
         )
         return _response.data
 
@@ -204,6 +570,7 @@ class DatasetsClient:
         name: str,
         description: typing.Optional[str] = OMIT,
         visibility: typing.Optional[DatasetUpdateVisibility] = OMIT,
+        tags: typing.Optional[typing.Sequence[str]] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> None:
         """
@@ -219,6 +586,8 @@ class DatasetsClient:
 
         visibility : typing.Optional[DatasetUpdateVisibility]
 
+        tags : typing.Optional[typing.Sequence[str]]
+
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
 
@@ -233,7 +602,7 @@ class DatasetsClient:
         client.datasets.update_dataset(id='id', name='name', )
         """
         _response = self._raw_client.update_dataset(
-            id, name=name, description=description, visibility=visibility, request_options=request_options
+            id, name=name, description=description, visibility=visibility, tags=tags, request_options=request_options
         )
         return _response.data
 
@@ -262,7 +631,11 @@ class DatasetsClient:
         return _response.data
 
     def delete_dataset_by_name(
-        self, *, dataset_name: str, request_options: typing.Optional[RequestOptions] = None
+        self,
+        *,
+        dataset_name: str,
+        project_name: typing.Optional[str] = OMIT,
+        request_options: typing.Optional[RequestOptions] = None,
     ) -> None:
         """
         Delete dataset by name
@@ -270,6 +643,8 @@ class DatasetsClient:
         Parameters
         ----------
         dataset_name : str
+
+        project_name : typing.Optional[str]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -284,18 +659,40 @@ class DatasetsClient:
         client = OpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
         client.datasets.delete_dataset_by_name(dataset_name='dataset_name', )
         """
-        _response = self._raw_client.delete_dataset_by_name(dataset_name=dataset_name, request_options=request_options)
+        _response = self._raw_client.delete_dataset_by_name(
+            dataset_name=dataset_name, project_name=project_name, request_options=request_options
+        )
         return _response.data
 
     def delete_dataset_items(
-        self, *, item_ids: typing.Sequence[str], request_options: typing.Optional[RequestOptions] = None
+        self,
+        *,
+        item_ids: typing.Optional[typing.Sequence[str]] = OMIT,
+        dataset_id: typing.Optional[str] = OMIT,
+        filters: typing.Optional[typing.Sequence[DatasetItemFilter]] = OMIT,
+        batch_group_id: typing.Optional[str] = OMIT,
+        request_options: typing.Optional[RequestOptions] = None,
     ) -> None:
         """
-        Delete dataset items
+        Delete dataset items using one of two modes:
+        1. **Delete by IDs**: Provide 'item_ids' to delete specific items by their IDs
+        2. **Delete by filters**: Provide 'dataset_id' with optional 'filters' to delete items matching criteria
+
+        When using filters, an empty 'filters' array will delete all items in the specified dataset.
 
         Parameters
         ----------
-        item_ids : typing.Sequence[str]
+        item_ids : typing.Optional[typing.Sequence[str]]
+            List of dataset item IDs to delete (max 1000). Use this to delete specific items by their IDs. Mutually exclusive with 'dataset_id' and 'filters'.
+
+        dataset_id : typing.Optional[str]
+            Dataset ID to scope the deletion. Required when using 'filters'. Mutually exclusive with 'item_ids'.
+
+        filters : typing.Optional[typing.Sequence[DatasetItemFilter]]
+            Filters to select dataset items to delete within the specified dataset. Must be used with 'dataset_id'. Mutually exclusive with 'item_ids'. Empty array means 'delete all items in the dataset'.
+
+        batch_group_id : typing.Optional[str]
+            Optional batch group ID to group multiple delete operations into a single dataset version. If null, mutates the latest version instead of creating a new one.
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -308,9 +705,15 @@ class DatasetsClient:
         --------
         from Opik import OpikApi
         client = OpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
-        client.datasets.delete_dataset_items(item_ids=['item_ids'], )
+        client.datasets.delete_dataset_items()
         """
-        _response = self._raw_client.delete_dataset_items(item_ids=item_ids, request_options=request_options)
+        _response = self._raw_client.delete_dataset_items(
+            item_ids=item_ids,
+            dataset_id=dataset_id,
+            filters=filters,
+            batch_group_id=batch_group_id,
+            request_options=request_options,
+        )
         return _response.data
 
     def delete_datasets_batch(
@@ -339,6 +742,96 @@ class DatasetsClient:
         _response = self._raw_client.delete_datasets_batch(ids=ids, request_options=request_options)
         return _response.data
 
+    def download_dataset_export(
+        self, job_id: str, *, request_options: typing.Optional[RequestOptions] = None
+    ) -> typing.Iterator[bytes]:
+        """
+        Downloads the exported CSV file for a completed export job. This endpoint proxies the file download to avoid exposing internal storage URLs.
+
+        Parameters
+        ----------
+        job_id : str
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration. You can pass in configuration such as `chunk_size`, and more to customize the request and response.
+
+        Returns
+        -------
+        typing.Iterator[bytes]
+            CSV file content
+
+        Examples
+        --------
+        from Opik import OpikApi
+        client = OpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        client.datasets.download_dataset_export(job_id='jobId', )
+        """
+        with self._raw_client.download_dataset_export(job_id, request_options=request_options) as r:
+            yield from r.data
+
+    def expand_dataset(
+        self,
+        id: str,
+        *,
+        model: str,
+        sample_count: typing.Optional[int] = OMIT,
+        preserve_fields: typing.Optional[typing.Sequence[str]] = OMIT,
+        variation_instructions: typing.Optional[str] = OMIT,
+        custom_prompt: typing.Optional[str] = OMIT,
+        max_completion_tokens: typing.Optional[int] = OMIT,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> DatasetExpansionResponse:
+        """
+        Generate synthetic dataset samples using LLM based on existing data patterns
+
+        Parameters
+        ----------
+        id : str
+
+        model : str
+            The model to use for synthetic data generation
+
+        sample_count : typing.Optional[int]
+            Number of synthetic samples to generate
+
+        preserve_fields : typing.Optional[typing.Sequence[str]]
+            Fields to preserve patterns from original data
+
+        variation_instructions : typing.Optional[str]
+            Additional instructions for data variation
+
+        custom_prompt : typing.Optional[str]
+            Custom prompt to use for generation instead of auto-generated one
+
+        max_completion_tokens : typing.Optional[int]
+            Maximum number of tokens for the LLM response. Required by Anthropic, used as maxOutputTokens for Gemini. If not provided, defaults to 4000 for Anthropic models only.
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        DatasetExpansionResponse
+            Generated synthetic samples
+
+        Examples
+        --------
+        from Opik import OpikApi
+        client = OpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        client.datasets.expand_dataset(id='id', model='gpt-4', )
+        """
+        _response = self._raw_client.expand_dataset(
+            id,
+            model=model,
+            sample_count=sample_count,
+            preserve_fields=preserve_fields,
+            variation_instructions=variation_instructions,
+            custom_prompt=custom_prompt,
+            max_completion_tokens=max_completion_tokens,
+            request_options=request_options,
+        )
+        return _response.data
+
     def find_dataset_items_with_experiment_items(
         self,
         id: str,
@@ -347,6 +840,8 @@ class DatasetsClient:
         page: typing.Optional[int] = None,
         size: typing.Optional[int] = None,
         filters: typing.Optional[str] = None,
+        sorting: typing.Optional[str] = None,
+        search: typing.Optional[str] = None,
         truncate: typing.Optional[bool] = None,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> DatasetItemPageCompare:
@@ -364,6 +859,10 @@ class DatasetsClient:
         size : typing.Optional[int]
 
         filters : typing.Optional[str]
+
+        sorting : typing.Optional[str]
+
+        search : typing.Optional[str]
 
         truncate : typing.Optional[bool]
 
@@ -387,13 +886,19 @@ class DatasetsClient:
             page=page,
             size=size,
             filters=filters,
+            sorting=sorting,
+            search=search,
             truncate=truncate,
             request_options=request_options,
         )
         return _response.data
 
     def get_dataset_by_identifier(
-        self, *, dataset_name: str, request_options: typing.Optional[RequestOptions] = None
+        self,
+        *,
+        dataset_name: str,
+        project_name: typing.Optional[str] = OMIT,
+        request_options: typing.Optional[RequestOptions] = None,
     ) -> DatasetPublic:
         """
         Get dataset by name
@@ -401,6 +906,8 @@ class DatasetsClient:
         Parameters
         ----------
         dataset_name : str
+
+        project_name : typing.Optional[str]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -417,8 +924,98 @@ class DatasetsClient:
         client.datasets.get_dataset_by_identifier(dataset_name='dataset_name', )
         """
         _response = self._raw_client.get_dataset_by_identifier(
-            dataset_name=dataset_name, request_options=request_options
+            dataset_name=dataset_name, project_name=project_name, request_options=request_options
         )
+        return _response.data
+
+    def get_dataset_experiment_items_stats(
+        self,
+        id: str,
+        *,
+        experiment_ids: str,
+        filters: typing.Optional[str] = None,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> ProjectStatsPublic:
+        """
+        Get experiment items stats for dataset
+
+        Parameters
+        ----------
+        id : str
+
+        experiment_ids : str
+
+        filters : typing.Optional[str]
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        ProjectStatsPublic
+            Experiment items stats resource
+
+        Examples
+        --------
+        from Opik import OpikApi
+        client = OpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        client.datasets.get_dataset_experiment_items_stats(id='id', experiment_ids='experiment_ids', )
+        """
+        _response = self._raw_client.get_dataset_experiment_items_stats(
+            id, experiment_ids=experiment_ids, filters=filters, request_options=request_options
+        )
+        return _response.data
+
+    def get_dataset_export_job(
+        self, job_id: str, *, request_options: typing.Optional[RequestOptions] = None
+    ) -> DatasetExportJobPublic:
+        """
+        Retrieves the current status of a dataset export job
+
+        Parameters
+        ----------
+        job_id : str
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        DatasetExportJobPublic
+            Export job details
+
+        Examples
+        --------
+        from Opik import OpikApi
+        client = OpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        client.datasets.get_dataset_export_job(job_id='jobId', )
+        """
+        _response = self._raw_client.get_dataset_export_job(job_id, request_options=request_options)
+        return _response.data
+
+    def get_dataset_export_jobs(
+        self, *, request_options: typing.Optional[RequestOptions] = None
+    ) -> typing.List[DatasetExportJobPublic]:
+        """
+        Retrieves all export jobs for the workspace. This is used to restore the export panel state after page refresh.
+
+        Parameters
+        ----------
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        typing.List[DatasetExportJobPublic]
+            List of export jobs
+
+        Examples
+        --------
+        from Opik import OpikApi
+        client = OpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        client.datasets.get_dataset_export_jobs()
+        """
+        _response = self._raw_client.get_dataset_export_jobs(request_options=request_options)
         return _response.data
 
     def get_dataset_item_by_id(
@@ -448,12 +1045,87 @@ class DatasetsClient:
         _response = self._raw_client.get_dataset_item_by_id(item_id, request_options=request_options)
         return _response.data
 
+    def patch_dataset_item(
+        self,
+        item_id: str,
+        *,
+        source: DatasetItemWriteSource,
+        data: JsonNode,
+        id: typing.Optional[str] = OMIT,
+        trace_id: typing.Optional[str] = OMIT,
+        span_id: typing.Optional[str] = OMIT,
+        description: typing.Optional[str] = OMIT,
+        tags: typing.Optional[typing.Sequence[str]] = OMIT,
+        evaluators: typing.Optional[typing.Sequence[EvaluatorItemWrite]] = OMIT,
+        execution_policy: typing.Optional[ExecutionPolicyWrite] = OMIT,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> None:
+        """
+        Partially update dataset item by id. Only provided fields will be updated.
+
+        Parameters
+        ----------
+        item_id : str
+
+        source : DatasetItemWriteSource
+
+        data : JsonNode
+
+        id : typing.Optional[str]
+            Stable item identifier.
+            On write, used as the upsert key.
+            If omitted, a new ID is generated.
+            Remains the same across dataset versions
+
+        trace_id : typing.Optional[str]
+
+        span_id : typing.Optional[str]
+
+        description : typing.Optional[str]
+
+        tags : typing.Optional[typing.Sequence[str]]
+
+        evaluators : typing.Optional[typing.Sequence[EvaluatorItemWrite]]
+
+        execution_policy : typing.Optional[ExecutionPolicyWrite]
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        None
+
+        Examples
+        --------
+        from Opik import OpikApi
+        client = OpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        client.datasets.patch_dataset_item(item_id='itemId', source="manual", data={'key': 'value'
+        }, )
+        """
+        _response = self._raw_client.patch_dataset_item(
+            item_id,
+            source=source,
+            data=data,
+            id=id,
+            trace_id=trace_id,
+            span_id=span_id,
+            description=description,
+            tags=tags,
+            evaluators=evaluators,
+            execution_policy=execution_policy,
+            request_options=request_options,
+        )
+        return _response.data
+
     def get_dataset_items(
         self,
         id: str,
         *,
         page: typing.Optional[int] = None,
         size: typing.Optional[int] = None,
+        version: typing.Optional[str] = None,
+        filters: typing.Optional[str] = None,
         truncate: typing.Optional[bool] = None,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> DatasetItemPagePublic:
@@ -467,6 +1139,10 @@ class DatasetsClient:
         page : typing.Optional[int]
 
         size : typing.Optional[int]
+
+        version : typing.Optional[str]
+
+        filters : typing.Optional[str]
 
         truncate : typing.Optional[bool]
 
@@ -485,7 +1161,13 @@ class DatasetsClient:
         client.datasets.get_dataset_items(id='id', )
         """
         _response = self._raw_client.get_dataset_items(
-            id, page=page, size=size, truncate=truncate, request_options=request_options
+            id,
+            page=page,
+            size=size,
+            version=version,
+            filters=filters,
+            truncate=truncate,
+            request_options=request_options,
         )
         return _response.data
 
@@ -524,12 +1206,68 @@ class DatasetsClient:
         )
         return _response.data
 
+    def mark_dataset_export_job_viewed(
+        self, job_id: str, *, request_options: typing.Optional[RequestOptions] = None
+    ) -> None:
+        """
+        Marks a dataset export job as viewed by setting the viewed_at timestamp. This is used to track that a user has seen a failed job's error message. This operation is idempotent.
+
+        Parameters
+        ----------
+        job_id : str
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        None
+
+        Examples
+        --------
+        from Opik import OpikApi
+        client = OpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        client.datasets.mark_dataset_export_job_viewed(job_id='jobId', )
+        """
+        _response = self._raw_client.mark_dataset_export_job_viewed(job_id, request_options=request_options)
+        return _response.data
+
+    def start_dataset_export(
+        self, id: str, *, request_options: typing.Optional[RequestOptions] = None
+    ) -> DatasetExportJobPublic:
+        """
+        Initiates an asynchronous CSV export job for the dataset. Returns immediately with job details for polling.
+
+        Parameters
+        ----------
+        id : str
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        DatasetExportJobPublic
+            Existing export job in progress
+
+        Examples
+        --------
+        from Opik import OpikApi
+        client = OpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        client.datasets.start_dataset_export(id='id', )
+        """
+        _response = self._raw_client.start_dataset_export(id, request_options=request_options)
+        return _response.data
+
     def stream_dataset_items(
         self,
         *,
         dataset_name: str,
         last_retrieved_id: typing.Optional[str] = OMIT,
         steam_limit: typing.Optional[int] = OMIT,
+        dataset_version: typing.Optional[str] = OMIT,
+        project_name: typing.Optional[str] = OMIT,
+        filters: typing.Optional[str] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> typing.Iterator[bytes]:
         """
@@ -543,6 +1281,12 @@ class DatasetsClient:
 
         steam_limit : typing.Optional[int]
 
+        dataset_version : typing.Optional[str]
+
+        project_name : typing.Optional[str]
+
+        filters : typing.Optional[str]
+
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration. You can pass in configuration such as `chunk_size`, and more to customize the request and response.
 
@@ -555,9 +1299,246 @@ class DatasetsClient:
             dataset_name=dataset_name,
             last_retrieved_id=last_retrieved_id,
             steam_limit=steam_limit,
+            dataset_version=dataset_version,
+            project_name=project_name,
+            filters=filters,
             request_options=request_options,
         ) as r:
             yield from r.data
+
+    def compare_dataset_versions(
+        self, id: str, *, request_options: typing.Optional[RequestOptions] = None
+    ) -> DatasetVersionDiff:
+        """
+        Compare the latest committed dataset version with the current draft state. This endpoint provides insights into changes made since the last version was committed. The comparison calculates additions, modifications, deletions, and unchanged items between the latest version snapshot and current draft.
+
+        Parameters
+        ----------
+        id : str
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        DatasetVersionDiff
+            Diff computed successfully
+
+        Examples
+        --------
+        from Opik import OpikApi
+        client = OpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        client.datasets.compare_dataset_versions(id='id', )
+        """
+        _response = self._raw_client.compare_dataset_versions(id, request_options=request_options)
+        return _response.data
+
+    def create_version_tag(
+        self, id: str, version_hash: str, *, tag: str, request_options: typing.Optional[RequestOptions] = None
+    ) -> None:
+        """
+        Add a tag to a specific dataset version for easy reference (e.g., 'baseline', 'v1.0', 'production')
+
+        Parameters
+        ----------
+        id : str
+
+        version_hash : str
+
+        tag : str
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        None
+
+        Examples
+        --------
+        from Opik import OpikApi
+        client = OpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        client.datasets.create_version_tag(id='id', version_hash='versionHash', tag='tag', )
+        """
+        _response = self._raw_client.create_version_tag(id, version_hash, tag=tag, request_options=request_options)
+        return _response.data
+
+    def delete_version_tag(
+        self, id: str, version_hash: str, tag: str, *, request_options: typing.Optional[RequestOptions] = None
+    ) -> None:
+        """
+        Remove a tag from a dataset version. The version itself is not deleted, only the tag reference.
+
+        Parameters
+        ----------
+        id : str
+
+        version_hash : str
+
+        tag : str
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        None
+
+        Examples
+        --------
+        from Opik import OpikApi
+        client = OpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        client.datasets.delete_version_tag(id='id', version_hash='versionHash', tag='tag', )
+        """
+        _response = self._raw_client.delete_version_tag(id, version_hash, tag, request_options=request_options)
+        return _response.data
+
+    def list_dataset_versions(
+        self,
+        id: str,
+        *,
+        page: typing.Optional[int] = None,
+        size: typing.Optional[int] = None,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> DatasetVersionPagePublic:
+        """
+        Get paginated list of versions for a dataset, ordered by creation time (newest first)
+
+        Parameters
+        ----------
+        id : str
+
+        page : typing.Optional[int]
+
+        size : typing.Optional[int]
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        DatasetVersionPagePublic
+            Dataset versions
+
+        Examples
+        --------
+        from Opik import OpikApi
+        client = OpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        client.datasets.list_dataset_versions(id='id', )
+        """
+        _response = self._raw_client.list_dataset_versions(id, page=page, size=size, request_options=request_options)
+        return _response.data
+
+    def restore_dataset_version(
+        self, id: str, *, version_ref: str, request_options: typing.Optional[RequestOptions] = None
+    ) -> DatasetVersionPublic:
+        """
+        Restores the dataset to a previous version state by creating a new version with items copied from the specified version. If the version is already the latest, returns it as-is (no-op).
+
+        Parameters
+        ----------
+        id : str
+
+        version_ref : str
+            Version hash or tag to restore from
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        DatasetVersionPublic
+            Version restored successfully
+
+        Examples
+        --------
+        from Opik import OpikApi
+        client = OpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        client.datasets.restore_dataset_version(id='id', version_ref='version_ref', )
+        """
+        _response = self._raw_client.restore_dataset_version(
+            id, version_ref=version_ref, request_options=request_options
+        )
+        return _response.data
+
+    def retrieve_dataset_version(
+        self, id: str, *, version_name: str, request_options: typing.Optional[RequestOptions] = None
+    ) -> DatasetVersionPublic:
+        """
+        Get a specific version by its version name (e.g., 'v1', 'v373'). This is more efficient than paginating through all versions for large datasets.
+
+        Parameters
+        ----------
+        id : str
+
+        version_name : str
+            Version name in format 'vN' (e.g., 'v1', 'v373')
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        DatasetVersionPublic
+            Dataset version
+
+        Examples
+        --------
+        from Opik import OpikApi
+        client = OpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        client.datasets.retrieve_dataset_version(id='id', version_name='v1', )
+        """
+        _response = self._raw_client.retrieve_dataset_version(
+            id, version_name=version_name, request_options=request_options
+        )
+        return _response.data
+
+    def update_dataset_version(
+        self,
+        id: str,
+        version_hash: str,
+        *,
+        change_description: typing.Optional[str] = OMIT,
+        tags_to_add: typing.Optional[typing.Sequence[str]] = OMIT,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> DatasetVersionPublic:
+        """
+        Update a dataset version's change_description and/or add new tags
+
+        Parameters
+        ----------
+        id : str
+
+        version_hash : str
+
+        change_description : typing.Optional[str]
+            Optional description of changes in this version
+
+        tags_to_add : typing.Optional[typing.Sequence[str]]
+            Optional list of tags to add to this version
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        DatasetVersionPublic
+            Version updated successfully
+
+        Examples
+        --------
+        from Opik import OpikApi
+        client = OpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        client.datasets.update_dataset_version(id='id', version_hash='versionHash', )
+        """
+        _response = self._raw_client.update_dataset_version(
+            id,
+            version_hash,
+            change_description=change_description,
+            tags_to_add=tags_to_add,
+            request_options=request_options,
+        )
+        return _response.data
 
 
 class AsyncDatasetsClient:
@@ -575,6 +1556,115 @@ class AsyncDatasetsClient:
         """
         return self._raw_client
 
+    async def apply_dataset_item_changes(
+        self,
+        id: str,
+        *,
+        request: DatasetItemChangesPublic,
+        override: typing.Optional[bool] = None,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> DatasetVersionPublic:
+        """
+        Apply delta changes (add, edit, delete) to a dataset version with conflict detection.
+
+        This endpoint:
+        - Creates a new version with the applied changes
+        - Validates that baseVersion matches the latest version (unless override=true)
+        - Returns 409 Conflict if baseVersion is stale and override is not set
+
+        Use `override=true` query parameter to force version creation even with stale baseVersion.
+
+        Set 'copy_from_dataset_id' and 'copy_from_version_id' together on the request body to read
+        carry-forward rows from the supplied (dataset, version) pair instead of the destination's
+        prior version. When the fields are null, carry-forward rows are read from the destination's
+        prior version.
+
+        Parameters
+        ----------
+        id : str
+
+        request : DatasetItemChangesPublic
+
+        override : typing.Optional[bool]
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        DatasetVersionPublic
+            Version created successfully
+
+        Examples
+        --------
+        from Opik import AsyncOpikApi
+        import asyncio
+        client = AsyncOpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        async def main() -> None:
+            await client.datasets.apply_dataset_item_changes(id='id', request={'key': 'value'
+            }, )
+        asyncio.run(main())
+        """
+        _response = await self._raw_client.apply_dataset_item_changes(
+            id, request=request, override=override, request_options=request_options
+        )
+        return _response.data
+
+    async def batch_update_dataset_items(
+        self,
+        *,
+        update: DatasetItemUpdate,
+        ids: typing.Optional[typing.Sequence[str]] = OMIT,
+        filters: typing.Optional[typing.Sequence[DatasetItemFilter]] = OMIT,
+        dataset_id: typing.Optional[str] = OMIT,
+        merge_tags: typing.Optional[bool] = OMIT,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> None:
+        """
+        Update multiple dataset items
+
+        Parameters
+        ----------
+        update : DatasetItemUpdate
+
+        ids : typing.Optional[typing.Sequence[str]]
+            List of dataset item IDs to update (max 1000). Mutually exclusive with 'filters'.
+
+        filters : typing.Optional[typing.Sequence[DatasetItemFilter]]
+
+        dataset_id : typing.Optional[str]
+            Dataset ID. Required when using 'filters', optional when using 'ids'.
+
+        merge_tags : typing.Optional[bool]
+            If true, merge tags with existing tags instead of replacing them. Default: false. When using 'filters', this is automatically set to true.
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        None
+
+        Examples
+        --------
+        from Opik import AsyncOpikApi
+        from Opik import DatasetItemUpdate
+        import asyncio
+        client = AsyncOpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        async def main() -> None:
+            await client.datasets.batch_update_dataset_items(update=DatasetItemUpdate(), )
+        asyncio.run(main())
+        """
+        _response = await self._raw_client.batch_update_dataset_items(
+            update=update,
+            ids=ids,
+            filters=filters,
+            dataset_id=dataset_id,
+            merge_tags=merge_tags,
+            request_options=request_options,
+        )
+        return _response.data
+
     async def find_datasets(
         self,
         *,
@@ -583,8 +1673,10 @@ class AsyncDatasetsClient:
         with_experiments_only: typing.Optional[bool] = None,
         with_optimizations_only: typing.Optional[bool] = None,
         prompt_id: typing.Optional[str] = None,
+        project_id: typing.Optional[str] = None,
         name: typing.Optional[str] = None,
         sorting: typing.Optional[str] = None,
+        filters: typing.Optional[str] = None,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> DatasetPagePublic:
         """
@@ -602,9 +1694,13 @@ class AsyncDatasetsClient:
 
         prompt_id : typing.Optional[str]
 
+        project_id : typing.Optional[str]
+
         name : typing.Optional[str]
 
         sorting : typing.Optional[str]
+
+        filters : typing.Optional[str]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -629,8 +1725,10 @@ class AsyncDatasetsClient:
             with_experiments_only=with_experiments_only,
             with_optimizations_only=with_optimizations_only,
             prompt_id=prompt_id,
+            project_id=project_id,
             name=name,
             sorting=sorting,
+            filters=filters,
             request_options=request_options,
         )
         return _response.data
@@ -640,7 +1738,11 @@ class AsyncDatasetsClient:
         *,
         name: str,
         id: typing.Optional[str] = OMIT,
+        project_id: typing.Optional[str] = OMIT,
+        project_name: typing.Optional[str] = OMIT,
+        type: typing.Optional[DatasetWriteType] = OMIT,
         visibility: typing.Optional[DatasetWriteVisibility] = OMIT,
+        tags: typing.Optional[typing.Sequence[str]] = OMIT,
         description: typing.Optional[str] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> None:
@@ -653,7 +1755,17 @@ class AsyncDatasetsClient:
 
         id : typing.Optional[str]
 
+        project_id : typing.Optional[str]
+            Project ID. Takes precedence over project_name when both are provided.
+
+        project_name : typing.Optional[str]
+            For project scope, specify either project_id or project_name. If project_name is provided and the project does not exist, it will be created. Ignored when project_id is provided. If neither is provided, the dataset is created at workspace level.
+
+        type : typing.Optional[DatasetWriteType]
+
         visibility : typing.Optional[DatasetWriteVisibility]
+
+        tags : typing.Optional[typing.Sequence[str]]
 
         description : typing.Optional[str]
 
@@ -674,7 +1786,15 @@ class AsyncDatasetsClient:
         asyncio.run(main())
         """
         _response = await self._raw_client.create_dataset(
-            name=name, id=id, visibility=visibility, description=description, request_options=request_options
+            name=name,
+            id=id,
+            project_id=project_id,
+            project_name=project_name,
+            type=type,
+            visibility=visibility,
+            tags=tags,
+            description=description,
+            request_options=request_options,
         )
         return _response.data
 
@@ -684,10 +1804,21 @@ class AsyncDatasetsClient:
         items: typing.Sequence[DatasetItemWrite],
         dataset_name: typing.Optional[str] = OMIT,
         dataset_id: typing.Optional[str] = OMIT,
+        project_name: typing.Optional[str] = OMIT,
+        project_id: typing.Optional[str] = OMIT,
+        batch_group_id: typing.Optional[str] = OMIT,
+        copy_from_dataset_id: typing.Optional[str] = OMIT,
+        copy_from_version_id: typing.Optional[str] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> None:
         """
-        Create/update dataset items based on dataset item id
+        Create/update dataset items based on dataset item id.
+        Each item's 'id' field is the stable identifier and upsert key.
+        Provide it to update an existing item, or omit it to create a new one.
+
+        Set 'copy_from_dataset_id' and 'copy_from_version_id' together to read carry-forward rows
+        from the supplied (dataset, version) pair instead of the destination's prior version. When
+        the fields are null, carry-forward rows are read from the destination's prior version.
 
         Parameters
         ----------
@@ -698,6 +1829,21 @@ class AsyncDatasetsClient:
 
         dataset_id : typing.Optional[str]
             If null, dataset_name must be provided
+
+        project_name : typing.Optional[str]
+            Optional. Associates the batch with a project by name. Ignored if project_id is provided.
+
+        project_id : typing.Optional[str]
+            Optional. Associates the batch with a project by ID. Takes precedence over project_name.
+
+        batch_group_id : typing.Optional[str]
+            Optional batch group ID to group multiple batches into a single dataset version. If null, mutates the latest version instead of creating a new one.
+
+        copy_from_dataset_id : typing.Optional[str]
+            Optional. Dataset to read carry-forward rows from when materializing the new version. Required together with copy_from_version_id. When null, carry-forward rows are read from the destination dataset's prior version.
+
+        copy_from_version_id : typing.Optional[str]
+            Optional. Version within copy_from_dataset_id to read carry-forward rows from. Required together with copy_from_dataset_id.
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -718,7 +1864,207 @@ class AsyncDatasetsClient:
         asyncio.run(main())
         """
         _response = await self._raw_client.create_or_update_dataset_items(
-            items=items, dataset_name=dataset_name, dataset_id=dataset_id, request_options=request_options
+            items=items,
+            dataset_name=dataset_name,
+            dataset_id=dataset_id,
+            project_name=project_name,
+            project_id=project_id,
+            batch_group_id=batch_group_id,
+            copy_from_dataset_id=copy_from_dataset_id,
+            copy_from_version_id=copy_from_version_id,
+            request_options=request_options,
+        )
+        return _response.data
+
+    async def create_dataset_items_from_csv(
+        self,
+        *,
+        file: typing.Dict[str, typing.Optional[typing.Any]],
+        dataset_id: str,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> None:
+        """
+        Create dataset items from uploaded CSV file. CSV should have headers in the first row. Processing happens asynchronously in batches.
+
+        Parameters
+        ----------
+        file : typing.Dict[str, typing.Optional[typing.Any]]
+
+        dataset_id : str
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        None
+
+        Examples
+        --------
+        from Opik import AsyncOpikApi
+        import asyncio
+        client = AsyncOpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        async def main() -> None:
+            await client.datasets.create_dataset_items_from_csv(file={'key': 'value'
+            }, dataset_id='dataset_id', )
+        asyncio.run(main())
+        """
+        _response = await self._raw_client.create_dataset_items_from_csv(
+            file=file, dataset_id=dataset_id, request_options=request_options
+        )
+        return _response.data
+
+    async def create_dataset_items_from_json(
+        self,
+        *,
+        file: typing.Dict[str, typing.Optional[typing.Any]],
+        dataset_id: str,
+        format: CreateDatasetItemsFromJsonRequestFormat,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> None:
+        """
+        Create dataset items from an uploaded JSON or JSONL file. JSON files must contain a top-level array of objects.
+        JSONL files contain one JSON object per non-blank line; multi-line JSON objects are not supported.
+        Reserved keys (id, source, description, tags, evaluators, execution_policy) are extracted into the
+        corresponding DatasetItem fields; all remaining keys form the item's data map and preserve their JSON types.
+        To link dataset items to specific traces or spans use the dedicated /items/from-traces or /items/from-spans endpoints.
+        Processing happens asynchronously in batches. With dataset versioning enabled, a supplied id acts as an upsert key.
+
+        Parameters
+        ----------
+        file : typing.Dict[str, typing.Optional[typing.Any]]
+
+        dataset_id : str
+
+        format : CreateDatasetItemsFromJsonRequestFormat
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        None
+
+        Examples
+        --------
+        from Opik import AsyncOpikApi
+        import asyncio
+        client = AsyncOpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        async def main() -> None:
+            await client.datasets.create_dataset_items_from_json(file={'key': 'value'
+            }, dataset_id='dataset_id', format="json", )
+        asyncio.run(main())
+        """
+        _response = await self._raw_client.create_dataset_items_from_json(
+            file=file, dataset_id=dataset_id, format=format, request_options=request_options
+        )
+        return _response.data
+
+    async def create_dataset_items_from_spans(
+        self,
+        dataset_id: str,
+        *,
+        span_ids: typing.Sequence[str],
+        enrichment_options: SpanEnrichmentOptions,
+        evaluators: typing.Optional[typing.Sequence[EvaluatorItem]] = OMIT,
+        execution_policy: typing.Optional[ExecutionPolicy] = OMIT,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> None:
+        """
+        Create dataset items from spans with enriched metadata
+
+        Parameters
+        ----------
+        dataset_id : str
+
+        span_ids : typing.Sequence[str]
+            Set of span IDs to add to the dataset
+
+        enrichment_options : SpanEnrichmentOptions
+
+        evaluators : typing.Optional[typing.Sequence[EvaluatorItem]]
+            Optional evaluators to apply to the created items
+
+        execution_policy : typing.Optional[ExecutionPolicy]
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        None
+
+        Examples
+        --------
+        from Opik import AsyncOpikApi
+        from Opik import SpanEnrichmentOptions
+        import asyncio
+        client = AsyncOpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        async def main() -> None:
+            await client.datasets.create_dataset_items_from_spans(dataset_id='dataset_id', span_ids=['span_ids'], enrichment_options=SpanEnrichmentOptions(), )
+        asyncio.run(main())
+        """
+        _response = await self._raw_client.create_dataset_items_from_spans(
+            dataset_id,
+            span_ids=span_ids,
+            enrichment_options=enrichment_options,
+            evaluators=evaluators,
+            execution_policy=execution_policy,
+            request_options=request_options,
+        )
+        return _response.data
+
+    async def create_dataset_items_from_traces(
+        self,
+        dataset_id: str,
+        *,
+        trace_ids: typing.Sequence[str],
+        enrichment_options: TraceEnrichmentOptions,
+        evaluators: typing.Optional[typing.Sequence[EvaluatorItem]] = OMIT,
+        execution_policy: typing.Optional[ExecutionPolicy] = OMIT,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> None:
+        """
+        Create dataset items from traces with enriched metadata
+
+        Parameters
+        ----------
+        dataset_id : str
+
+        trace_ids : typing.Sequence[str]
+            Set of trace IDs to add to the dataset
+
+        enrichment_options : TraceEnrichmentOptions
+
+        evaluators : typing.Optional[typing.Sequence[EvaluatorItem]]
+            Optional evaluators to apply to the created items
+
+        execution_policy : typing.Optional[ExecutionPolicy]
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        None
+
+        Examples
+        --------
+        from Opik import AsyncOpikApi
+        from Opik import TraceEnrichmentOptions
+        import asyncio
+        client = AsyncOpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        async def main() -> None:
+            await client.datasets.create_dataset_items_from_traces(dataset_id='dataset_id', trace_ids=['trace_ids'], enrichment_options=TraceEnrichmentOptions(), )
+        asyncio.run(main())
+        """
+        _response = await self._raw_client.create_dataset_items_from_traces(
+            dataset_id,
+            trace_ids=trace_ids,
+            enrichment_options=enrichment_options,
+            evaluators=evaluators,
+            execution_policy=execution_policy,
+            request_options=request_options,
         )
         return _response.data
 
@@ -759,6 +2105,7 @@ class AsyncDatasetsClient:
         name: str,
         description: typing.Optional[str] = OMIT,
         visibility: typing.Optional[DatasetUpdateVisibility] = OMIT,
+        tags: typing.Optional[typing.Sequence[str]] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> None:
         """
@@ -773,6 +2120,8 @@ class AsyncDatasetsClient:
         description : typing.Optional[str]
 
         visibility : typing.Optional[DatasetUpdateVisibility]
+
+        tags : typing.Optional[typing.Sequence[str]]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -791,7 +2140,7 @@ class AsyncDatasetsClient:
         asyncio.run(main())
         """
         _response = await self._raw_client.update_dataset(
-            id, name=name, description=description, visibility=visibility, request_options=request_options
+            id, name=name, description=description, visibility=visibility, tags=tags, request_options=request_options
         )
         return _response.data
 
@@ -823,7 +2172,11 @@ class AsyncDatasetsClient:
         return _response.data
 
     async def delete_dataset_by_name(
-        self, *, dataset_name: str, request_options: typing.Optional[RequestOptions] = None
+        self,
+        *,
+        dataset_name: str,
+        project_name: typing.Optional[str] = OMIT,
+        request_options: typing.Optional[RequestOptions] = None,
     ) -> None:
         """
         Delete dataset by name
@@ -831,6 +2184,8 @@ class AsyncDatasetsClient:
         Parameters
         ----------
         dataset_name : str
+
+        project_name : typing.Optional[str]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -849,19 +2204,39 @@ class AsyncDatasetsClient:
         asyncio.run(main())
         """
         _response = await self._raw_client.delete_dataset_by_name(
-            dataset_name=dataset_name, request_options=request_options
+            dataset_name=dataset_name, project_name=project_name, request_options=request_options
         )
         return _response.data
 
     async def delete_dataset_items(
-        self, *, item_ids: typing.Sequence[str], request_options: typing.Optional[RequestOptions] = None
+        self,
+        *,
+        item_ids: typing.Optional[typing.Sequence[str]] = OMIT,
+        dataset_id: typing.Optional[str] = OMIT,
+        filters: typing.Optional[typing.Sequence[DatasetItemFilter]] = OMIT,
+        batch_group_id: typing.Optional[str] = OMIT,
+        request_options: typing.Optional[RequestOptions] = None,
     ) -> None:
         """
-        Delete dataset items
+        Delete dataset items using one of two modes:
+        1. **Delete by IDs**: Provide 'item_ids' to delete specific items by their IDs
+        2. **Delete by filters**: Provide 'dataset_id' with optional 'filters' to delete items matching criteria
+
+        When using filters, an empty 'filters' array will delete all items in the specified dataset.
 
         Parameters
         ----------
-        item_ids : typing.Sequence[str]
+        item_ids : typing.Optional[typing.Sequence[str]]
+            List of dataset item IDs to delete (max 1000). Use this to delete specific items by their IDs. Mutually exclusive with 'dataset_id' and 'filters'.
+
+        dataset_id : typing.Optional[str]
+            Dataset ID to scope the deletion. Required when using 'filters'. Mutually exclusive with 'item_ids'.
+
+        filters : typing.Optional[typing.Sequence[DatasetItemFilter]]
+            Filters to select dataset items to delete within the specified dataset. Must be used with 'dataset_id'. Mutually exclusive with 'item_ids'. Empty array means 'delete all items in the dataset'.
+
+        batch_group_id : typing.Optional[str]
+            Optional batch group ID to group multiple delete operations into a single dataset version. If null, mutates the latest version instead of creating a new one.
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -876,10 +2251,16 @@ class AsyncDatasetsClient:
         import asyncio
         client = AsyncOpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
         async def main() -> None:
-            await client.datasets.delete_dataset_items(item_ids=['item_ids'], )
+            await client.datasets.delete_dataset_items()
         asyncio.run(main())
         """
-        _response = await self._raw_client.delete_dataset_items(item_ids=item_ids, request_options=request_options)
+        _response = await self._raw_client.delete_dataset_items(
+            item_ids=item_ids,
+            dataset_id=dataset_id,
+            filters=filters,
+            batch_group_id=batch_group_id,
+            request_options=request_options,
+        )
         return _response.data
 
     async def delete_datasets_batch(
@@ -911,6 +2292,103 @@ class AsyncDatasetsClient:
         _response = await self._raw_client.delete_datasets_batch(ids=ids, request_options=request_options)
         return _response.data
 
+    async def download_dataset_export(
+        self, job_id: str, *, request_options: typing.Optional[RequestOptions] = None
+    ) -> typing.AsyncIterator[bytes]:
+        """
+        Downloads the exported CSV file for a completed export job. This endpoint proxies the file download to avoid exposing internal storage URLs.
+
+        Parameters
+        ----------
+        job_id : str
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration. You can pass in configuration such as `chunk_size`, and more to customize the request and response.
+
+        Returns
+        -------
+        typing.AsyncIterator[bytes]
+            CSV file content
+
+        Examples
+        --------
+        from Opik import AsyncOpikApi
+        import asyncio
+        client = AsyncOpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        async def main() -> None:
+            await client.datasets.download_dataset_export(job_id='jobId', )
+        asyncio.run(main())
+        """
+        async with self._raw_client.download_dataset_export(job_id, request_options=request_options) as r:
+            async for data in r.data:
+                yield data
+
+    async def expand_dataset(
+        self,
+        id: str,
+        *,
+        model: str,
+        sample_count: typing.Optional[int] = OMIT,
+        preserve_fields: typing.Optional[typing.Sequence[str]] = OMIT,
+        variation_instructions: typing.Optional[str] = OMIT,
+        custom_prompt: typing.Optional[str] = OMIT,
+        max_completion_tokens: typing.Optional[int] = OMIT,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> DatasetExpansionResponse:
+        """
+        Generate synthetic dataset samples using LLM based on existing data patterns
+
+        Parameters
+        ----------
+        id : str
+
+        model : str
+            The model to use for synthetic data generation
+
+        sample_count : typing.Optional[int]
+            Number of synthetic samples to generate
+
+        preserve_fields : typing.Optional[typing.Sequence[str]]
+            Fields to preserve patterns from original data
+
+        variation_instructions : typing.Optional[str]
+            Additional instructions for data variation
+
+        custom_prompt : typing.Optional[str]
+            Custom prompt to use for generation instead of auto-generated one
+
+        max_completion_tokens : typing.Optional[int]
+            Maximum number of tokens for the LLM response. Required by Anthropic, used as maxOutputTokens for Gemini. If not provided, defaults to 4000 for Anthropic models only.
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        DatasetExpansionResponse
+            Generated synthetic samples
+
+        Examples
+        --------
+        from Opik import AsyncOpikApi
+        import asyncio
+        client = AsyncOpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        async def main() -> None:
+            await client.datasets.expand_dataset(id='id', model='gpt-4', )
+        asyncio.run(main())
+        """
+        _response = await self._raw_client.expand_dataset(
+            id,
+            model=model,
+            sample_count=sample_count,
+            preserve_fields=preserve_fields,
+            variation_instructions=variation_instructions,
+            custom_prompt=custom_prompt,
+            max_completion_tokens=max_completion_tokens,
+            request_options=request_options,
+        )
+        return _response.data
+
     async def find_dataset_items_with_experiment_items(
         self,
         id: str,
@@ -919,6 +2397,8 @@ class AsyncDatasetsClient:
         page: typing.Optional[int] = None,
         size: typing.Optional[int] = None,
         filters: typing.Optional[str] = None,
+        sorting: typing.Optional[str] = None,
+        search: typing.Optional[str] = None,
         truncate: typing.Optional[bool] = None,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> DatasetItemPageCompare:
@@ -936,6 +2416,10 @@ class AsyncDatasetsClient:
         size : typing.Optional[int]
 
         filters : typing.Optional[str]
+
+        sorting : typing.Optional[str]
+
+        search : typing.Optional[str]
 
         truncate : typing.Optional[bool]
 
@@ -962,13 +2446,19 @@ class AsyncDatasetsClient:
             page=page,
             size=size,
             filters=filters,
+            sorting=sorting,
+            search=search,
             truncate=truncate,
             request_options=request_options,
         )
         return _response.data
 
     async def get_dataset_by_identifier(
-        self, *, dataset_name: str, request_options: typing.Optional[RequestOptions] = None
+        self,
+        *,
+        dataset_name: str,
+        project_name: typing.Optional[str] = OMIT,
+        request_options: typing.Optional[RequestOptions] = None,
     ) -> DatasetPublic:
         """
         Get dataset by name
@@ -976,6 +2466,8 @@ class AsyncDatasetsClient:
         Parameters
         ----------
         dataset_name : str
+
+        project_name : typing.Optional[str]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -995,8 +2487,107 @@ class AsyncDatasetsClient:
         asyncio.run(main())
         """
         _response = await self._raw_client.get_dataset_by_identifier(
-            dataset_name=dataset_name, request_options=request_options
+            dataset_name=dataset_name, project_name=project_name, request_options=request_options
         )
+        return _response.data
+
+    async def get_dataset_experiment_items_stats(
+        self,
+        id: str,
+        *,
+        experiment_ids: str,
+        filters: typing.Optional[str] = None,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> ProjectStatsPublic:
+        """
+        Get experiment items stats for dataset
+
+        Parameters
+        ----------
+        id : str
+
+        experiment_ids : str
+
+        filters : typing.Optional[str]
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        ProjectStatsPublic
+            Experiment items stats resource
+
+        Examples
+        --------
+        from Opik import AsyncOpikApi
+        import asyncio
+        client = AsyncOpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        async def main() -> None:
+            await client.datasets.get_dataset_experiment_items_stats(id='id', experiment_ids='experiment_ids', )
+        asyncio.run(main())
+        """
+        _response = await self._raw_client.get_dataset_experiment_items_stats(
+            id, experiment_ids=experiment_ids, filters=filters, request_options=request_options
+        )
+        return _response.data
+
+    async def get_dataset_export_job(
+        self, job_id: str, *, request_options: typing.Optional[RequestOptions] = None
+    ) -> DatasetExportJobPublic:
+        """
+        Retrieves the current status of a dataset export job
+
+        Parameters
+        ----------
+        job_id : str
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        DatasetExportJobPublic
+            Export job details
+
+        Examples
+        --------
+        from Opik import AsyncOpikApi
+        import asyncio
+        client = AsyncOpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        async def main() -> None:
+            await client.datasets.get_dataset_export_job(job_id='jobId', )
+        asyncio.run(main())
+        """
+        _response = await self._raw_client.get_dataset_export_job(job_id, request_options=request_options)
+        return _response.data
+
+    async def get_dataset_export_jobs(
+        self, *, request_options: typing.Optional[RequestOptions] = None
+    ) -> typing.List[DatasetExportJobPublic]:
+        """
+        Retrieves all export jobs for the workspace. This is used to restore the export panel state after page refresh.
+
+        Parameters
+        ----------
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        typing.List[DatasetExportJobPublic]
+            List of export jobs
+
+        Examples
+        --------
+        from Opik import AsyncOpikApi
+        import asyncio
+        client = AsyncOpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        async def main() -> None:
+            await client.datasets.get_dataset_export_jobs()
+        asyncio.run(main())
+        """
+        _response = await self._raw_client.get_dataset_export_jobs(request_options=request_options)
         return _response.data
 
     async def get_dataset_item_by_id(
@@ -1029,12 +2620,90 @@ class AsyncDatasetsClient:
         _response = await self._raw_client.get_dataset_item_by_id(item_id, request_options=request_options)
         return _response.data
 
+    async def patch_dataset_item(
+        self,
+        item_id: str,
+        *,
+        source: DatasetItemWriteSource,
+        data: JsonNode,
+        id: typing.Optional[str] = OMIT,
+        trace_id: typing.Optional[str] = OMIT,
+        span_id: typing.Optional[str] = OMIT,
+        description: typing.Optional[str] = OMIT,
+        tags: typing.Optional[typing.Sequence[str]] = OMIT,
+        evaluators: typing.Optional[typing.Sequence[EvaluatorItemWrite]] = OMIT,
+        execution_policy: typing.Optional[ExecutionPolicyWrite] = OMIT,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> None:
+        """
+        Partially update dataset item by id. Only provided fields will be updated.
+
+        Parameters
+        ----------
+        item_id : str
+
+        source : DatasetItemWriteSource
+
+        data : JsonNode
+
+        id : typing.Optional[str]
+            Stable item identifier.
+            On write, used as the upsert key.
+            If omitted, a new ID is generated.
+            Remains the same across dataset versions
+
+        trace_id : typing.Optional[str]
+
+        span_id : typing.Optional[str]
+
+        description : typing.Optional[str]
+
+        tags : typing.Optional[typing.Sequence[str]]
+
+        evaluators : typing.Optional[typing.Sequence[EvaluatorItemWrite]]
+
+        execution_policy : typing.Optional[ExecutionPolicyWrite]
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        None
+
+        Examples
+        --------
+        from Opik import AsyncOpikApi
+        import asyncio
+        client = AsyncOpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        async def main() -> None:
+            await client.datasets.patch_dataset_item(item_id='itemId', source="manual", data={'key': 'value'
+            }, )
+        asyncio.run(main())
+        """
+        _response = await self._raw_client.patch_dataset_item(
+            item_id,
+            source=source,
+            data=data,
+            id=id,
+            trace_id=trace_id,
+            span_id=span_id,
+            description=description,
+            tags=tags,
+            evaluators=evaluators,
+            execution_policy=execution_policy,
+            request_options=request_options,
+        )
+        return _response.data
+
     async def get_dataset_items(
         self,
         id: str,
         *,
         page: typing.Optional[int] = None,
         size: typing.Optional[int] = None,
+        version: typing.Optional[str] = None,
+        filters: typing.Optional[str] = None,
         truncate: typing.Optional[bool] = None,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> DatasetItemPagePublic:
@@ -1048,6 +2717,10 @@ class AsyncDatasetsClient:
         page : typing.Optional[int]
 
         size : typing.Optional[int]
+
+        version : typing.Optional[str]
+
+        filters : typing.Optional[str]
 
         truncate : typing.Optional[bool]
 
@@ -1069,7 +2742,13 @@ class AsyncDatasetsClient:
         asyncio.run(main())
         """
         _response = await self._raw_client.get_dataset_items(
-            id, page=page, size=size, truncate=truncate, request_options=request_options
+            id,
+            page=page,
+            size=size,
+            version=version,
+            filters=filters,
+            truncate=truncate,
+            request_options=request_options,
         )
         return _response.data
 
@@ -1111,12 +2790,74 @@ class AsyncDatasetsClient:
         )
         return _response.data
 
+    async def mark_dataset_export_job_viewed(
+        self, job_id: str, *, request_options: typing.Optional[RequestOptions] = None
+    ) -> None:
+        """
+        Marks a dataset export job as viewed by setting the viewed_at timestamp. This is used to track that a user has seen a failed job's error message. This operation is idempotent.
+
+        Parameters
+        ----------
+        job_id : str
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        None
+
+        Examples
+        --------
+        from Opik import AsyncOpikApi
+        import asyncio
+        client = AsyncOpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        async def main() -> None:
+            await client.datasets.mark_dataset_export_job_viewed(job_id='jobId', )
+        asyncio.run(main())
+        """
+        _response = await self._raw_client.mark_dataset_export_job_viewed(job_id, request_options=request_options)
+        return _response.data
+
+    async def start_dataset_export(
+        self, id: str, *, request_options: typing.Optional[RequestOptions] = None
+    ) -> DatasetExportJobPublic:
+        """
+        Initiates an asynchronous CSV export job for the dataset. Returns immediately with job details for polling.
+
+        Parameters
+        ----------
+        id : str
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        DatasetExportJobPublic
+            Existing export job in progress
+
+        Examples
+        --------
+        from Opik import AsyncOpikApi
+        import asyncio
+        client = AsyncOpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        async def main() -> None:
+            await client.datasets.start_dataset_export(id='id', )
+        asyncio.run(main())
+        """
+        _response = await self._raw_client.start_dataset_export(id, request_options=request_options)
+        return _response.data
+
     async def stream_dataset_items(
         self,
         *,
         dataset_name: str,
         last_retrieved_id: typing.Optional[str] = OMIT,
         steam_limit: typing.Optional[int] = OMIT,
+        dataset_version: typing.Optional[str] = OMIT,
+        project_name: typing.Optional[str] = OMIT,
+        filters: typing.Optional[str] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> typing.AsyncIterator[bytes]:
         """
@@ -1130,6 +2871,12 @@ class AsyncDatasetsClient:
 
         steam_limit : typing.Optional[int]
 
+        dataset_version : typing.Optional[str]
+
+        project_name : typing.Optional[str]
+
+        filters : typing.Optional[str]
+
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration. You can pass in configuration such as `chunk_size`, and more to customize the request and response.
 
@@ -1142,7 +2889,269 @@ class AsyncDatasetsClient:
             dataset_name=dataset_name,
             last_retrieved_id=last_retrieved_id,
             steam_limit=steam_limit,
+            dataset_version=dataset_version,
+            project_name=project_name,
+            filters=filters,
             request_options=request_options,
         ) as r:
             async for data in r.data:
                 yield data
+
+    async def compare_dataset_versions(
+        self, id: str, *, request_options: typing.Optional[RequestOptions] = None
+    ) -> DatasetVersionDiff:
+        """
+        Compare the latest committed dataset version with the current draft state. This endpoint provides insights into changes made since the last version was committed. The comparison calculates additions, modifications, deletions, and unchanged items between the latest version snapshot and current draft.
+
+        Parameters
+        ----------
+        id : str
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        DatasetVersionDiff
+            Diff computed successfully
+
+        Examples
+        --------
+        from Opik import AsyncOpikApi
+        import asyncio
+        client = AsyncOpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        async def main() -> None:
+            await client.datasets.compare_dataset_versions(id='id', )
+        asyncio.run(main())
+        """
+        _response = await self._raw_client.compare_dataset_versions(id, request_options=request_options)
+        return _response.data
+
+    async def create_version_tag(
+        self, id: str, version_hash: str, *, tag: str, request_options: typing.Optional[RequestOptions] = None
+    ) -> None:
+        """
+        Add a tag to a specific dataset version for easy reference (e.g., 'baseline', 'v1.0', 'production')
+
+        Parameters
+        ----------
+        id : str
+
+        version_hash : str
+
+        tag : str
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        None
+
+        Examples
+        --------
+        from Opik import AsyncOpikApi
+        import asyncio
+        client = AsyncOpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        async def main() -> None:
+            await client.datasets.create_version_tag(id='id', version_hash='versionHash', tag='tag', )
+        asyncio.run(main())
+        """
+        _response = await self._raw_client.create_version_tag(
+            id, version_hash, tag=tag, request_options=request_options
+        )
+        return _response.data
+
+    async def delete_version_tag(
+        self, id: str, version_hash: str, tag: str, *, request_options: typing.Optional[RequestOptions] = None
+    ) -> None:
+        """
+        Remove a tag from a dataset version. The version itself is not deleted, only the tag reference.
+
+        Parameters
+        ----------
+        id : str
+
+        version_hash : str
+
+        tag : str
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        None
+
+        Examples
+        --------
+        from Opik import AsyncOpikApi
+        import asyncio
+        client = AsyncOpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        async def main() -> None:
+            await client.datasets.delete_version_tag(id='id', version_hash='versionHash', tag='tag', )
+        asyncio.run(main())
+        """
+        _response = await self._raw_client.delete_version_tag(id, version_hash, tag, request_options=request_options)
+        return _response.data
+
+    async def list_dataset_versions(
+        self,
+        id: str,
+        *,
+        page: typing.Optional[int] = None,
+        size: typing.Optional[int] = None,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> DatasetVersionPagePublic:
+        """
+        Get paginated list of versions for a dataset, ordered by creation time (newest first)
+
+        Parameters
+        ----------
+        id : str
+
+        page : typing.Optional[int]
+
+        size : typing.Optional[int]
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        DatasetVersionPagePublic
+            Dataset versions
+
+        Examples
+        --------
+        from Opik import AsyncOpikApi
+        import asyncio
+        client = AsyncOpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        async def main() -> None:
+            await client.datasets.list_dataset_versions(id='id', )
+        asyncio.run(main())
+        """
+        _response = await self._raw_client.list_dataset_versions(
+            id, page=page, size=size, request_options=request_options
+        )
+        return _response.data
+
+    async def restore_dataset_version(
+        self, id: str, *, version_ref: str, request_options: typing.Optional[RequestOptions] = None
+    ) -> DatasetVersionPublic:
+        """
+        Restores the dataset to a previous version state by creating a new version with items copied from the specified version. If the version is already the latest, returns it as-is (no-op).
+
+        Parameters
+        ----------
+        id : str
+
+        version_ref : str
+            Version hash or tag to restore from
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        DatasetVersionPublic
+            Version restored successfully
+
+        Examples
+        --------
+        from Opik import AsyncOpikApi
+        import asyncio
+        client = AsyncOpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        async def main() -> None:
+            await client.datasets.restore_dataset_version(id='id', version_ref='version_ref', )
+        asyncio.run(main())
+        """
+        _response = await self._raw_client.restore_dataset_version(
+            id, version_ref=version_ref, request_options=request_options
+        )
+        return _response.data
+
+    async def retrieve_dataset_version(
+        self, id: str, *, version_name: str, request_options: typing.Optional[RequestOptions] = None
+    ) -> DatasetVersionPublic:
+        """
+        Get a specific version by its version name (e.g., 'v1', 'v373'). This is more efficient than paginating through all versions for large datasets.
+
+        Parameters
+        ----------
+        id : str
+
+        version_name : str
+            Version name in format 'vN' (e.g., 'v1', 'v373')
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        DatasetVersionPublic
+            Dataset version
+
+        Examples
+        --------
+        from Opik import AsyncOpikApi
+        import asyncio
+        client = AsyncOpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        async def main() -> None:
+            await client.datasets.retrieve_dataset_version(id='id', version_name='v1', )
+        asyncio.run(main())
+        """
+        _response = await self._raw_client.retrieve_dataset_version(
+            id, version_name=version_name, request_options=request_options
+        )
+        return _response.data
+
+    async def update_dataset_version(
+        self,
+        id: str,
+        version_hash: str,
+        *,
+        change_description: typing.Optional[str] = OMIT,
+        tags_to_add: typing.Optional[typing.Sequence[str]] = OMIT,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> DatasetVersionPublic:
+        """
+        Update a dataset version's change_description and/or add new tags
+
+        Parameters
+        ----------
+        id : str
+
+        version_hash : str
+
+        change_description : typing.Optional[str]
+            Optional description of changes in this version
+
+        tags_to_add : typing.Optional[typing.Sequence[str]]
+            Optional list of tags to add to this version
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        DatasetVersionPublic
+            Version updated successfully
+
+        Examples
+        --------
+        from Opik import AsyncOpikApi
+        import asyncio
+        client = AsyncOpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        async def main() -> None:
+            await client.datasets.update_dataset_version(id='id', version_hash='versionHash', )
+        asyncio.run(main())
+        """
+        _response = await self._raw_client.update_dataset_version(
+            id,
+            version_hash,
+            change_description=change_description,
+            tags_to_add=tags_to_add,
+            request_options=request_options,
+        )
+        return _response.data

@@ -24,3 +24,9 @@ export interface WorkspaceCost {
   project_id: string | null;
   data: WorkspaceChartData[];
 }
+
+export interface WorkspaceConfig {
+  timeout_to_mark_thread_as_inactive: string | null;
+  truncation_on_tables: boolean | null;
+  color_map: Record<string, string> | null;
+}

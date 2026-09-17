@@ -1,6 +1,6 @@
 package com.comet.opik.api.resources.v1.priv;
 
-import com.comet.opik.api.BatchDelete;
+import com.comet.opik.api.BatchDeleteByProject;
 import com.comet.opik.api.Project;
 import com.comet.opik.api.Span;
 import com.comet.opik.api.Trace;
@@ -12,6 +12,7 @@ import com.comet.opik.api.attachment.StartMultipartUploadResponse;
 import com.comet.opik.api.resources.utils.AuthTestUtils;
 import com.comet.opik.api.resources.utils.ClickHouseContainerUtils;
 import com.comet.opik.api.resources.utils.ClientSupportUtils;
+import com.comet.opik.api.resources.utils.MigrationUtils;
 import com.comet.opik.api.resources.utils.MinIOContainerUtils;
 import com.comet.opik.api.resources.utils.MySQLContainerUtils;
 import com.comet.opik.api.resources.utils.RedisContainerUtils;
@@ -27,10 +28,13 @@ import com.comet.opik.extensions.RegisterApp;
 import com.comet.opik.infrastructure.DatabaseAnalyticsFactory;
 import com.comet.opik.podam.PodamFactoryUtils;
 import com.comet.opik.utils.AttachmentUtilsTest;
+import com.fasterxml.uuid.Generators;
+import com.fasterxml.uuid.impl.TimeBasedEpochGenerator;
 import com.redis.testcontainers.RedisContainer;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.tuple.Pair;
+import org.awaitility.Awaitility;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
@@ -42,8 +46,8 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.testcontainers.clickhouse.ClickHouseContainer;
 import org.testcontainers.containers.GenericContainer;
-import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.lifecycle.Startables;
+import org.testcontainers.mysql.MySQLContainer;
 import ru.vyarus.dropwizard.guice.test.ClientSupport;
 import ru.vyarus.dropwizard.guice.test.jupiter.ext.TestDropwizardAppExtension;
 import uk.co.jemos.podam.api.PodamFactory;
@@ -54,6 +58,7 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 
@@ -76,7 +81,7 @@ class AttachmentResourceMinIOTest {
     private final RedisContainer REDIS = RedisContainerUtils.newRedisContainer();
     private final GenericContainer<?> ZOOKEEPER = ClickHouseContainerUtils.newZookeeperContainer();
     private final ClickHouseContainer CLICKHOUSE_CONTAINER = ClickHouseContainerUtils.newClickHouseContainer(ZOOKEEPER);
-    private final MySQLContainer<?> MYSQL = MySQLContainerUtils.newMySQLContainer();
+    private final MySQLContainer MYSQL = MySQLContainerUtils.newMySQLContainer();
     private final GenericContainer<?> MINIO = MinIOContainerUtils.newMinIOContainer();
 
     @RegisterApp
@@ -93,6 +98,8 @@ class AttachmentResourceMinIOTest {
         DatabaseAnalyticsFactory databaseAnalyticsFactory = ClickHouseContainerUtils
                 .newDatabaseAnalyticsFactory(CLICKHOUSE_CONTAINER, DATABASE_NAME);
 
+        MigrationUtils.runMysqlDbMigration(MYSQL);
+        MigrationUtils.runClickhouseDbMigration(CLICKHOUSE_CONTAINER);
         MinIOContainerUtils.setupBucketAndCredentials(minioUrl);
 
         APP = TestDropwizardAppExtensionUtils.newTestDropwizardAppExtension(
@@ -114,6 +121,7 @@ class AttachmentResourceMinIOTest {
     private String baseURI;
     private String baseURIEncoded;
     private ProjectService projectService;
+    private final TimeBasedEpochGenerator generator = Generators.timeBasedEpochGenerator();
 
     @BeforeAll
     void setUpAll(ClientSupport client, ProjectService projectService) {
@@ -174,6 +182,14 @@ class AttachmentResourceMinIOTest {
         attachmentResourceClient.downloadFile(downloadLink, API_KEY, 404);
     }
 
+    @Test
+    @DisplayName("Invalid base URL format returns error for MinIO attachment upload")
+    void invalidBaseUrlFormatReturnsError() {
+        StartMultipartUploadRequest startUploadRequest = prepareStartUploadRequest("https://www.comet.com/");
+        attachmentResourceClient
+                .startMultiPartUpload(startUploadRequest, API_KEY, TEST_WORKSPACE, 400);
+    }
+
     @ParameterizedTest
     @MethodSource
     void deleteTraceDeletesTraceAndSpanAttachments(Consumer<UUID> deleteTrace) throws IOException {
@@ -216,16 +232,20 @@ class AttachmentResourceMinIOTest {
         deleteTrace.accept(traceId);
 
         // Verify trace attachments were actually deleted via list endpoint and download link
-        tracePage = attachmentResourceClient.attachmentList(project.id(), EntityType.TRACE,
-                traceId, baseURIEncoded, API_KEY, TEST_WORKSPACE, 200);
-        assertThat(tracePage).isEqualTo(Attachment.AttachmentPage.empty(1));
-        attachmentResourceClient.downloadFile(traceDownloadLink, API_KEY, 404);
+        Awaitility.await().pollInterval(500, TimeUnit.MILLISECONDS).untilAsserted(() -> {
+            var tracePageUpdated = attachmentResourceClient.attachmentList(project.id(), EntityType.TRACE,
+                    traceId, baseURIEncoded, API_KEY, TEST_WORKSPACE, 200);
+            assertThat(tracePageUpdated).isEqualTo(Attachment.AttachmentPage.empty(1));
+            attachmentResourceClient.downloadFile(traceDownloadLink, API_KEY, 404);
+        });
 
         // Verify span attachments were actually deleted via list endpoint and download link
-        spanPage = attachmentResourceClient.attachmentList(project.id(), EntityType.SPAN,
-                spanId, baseURIEncoded, API_KEY, TEST_WORKSPACE, 200);
-        assertThat(spanPage).isEqualTo(Attachment.AttachmentPage.empty(1));
-        attachmentResourceClient.downloadFile(spanDownloadLink, API_KEY, 404);
+        Awaitility.await().pollInterval(500, TimeUnit.MILLISECONDS).untilAsserted(() -> {
+            var spanPageUpdated = attachmentResourceClient.attachmentList(project.id(), EntityType.SPAN,
+                    spanId, baseURIEncoded, API_KEY, TEST_WORKSPACE, 200);
+            assertThat(spanPageUpdated).isEqualTo(Attachment.AttachmentPage.empty(1));
+            attachmentResourceClient.downloadFile(spanDownloadLink, API_KEY, 404);
+        });
     }
 
     Stream<Arguments> deleteTraceDeletesTraceAndSpanAttachments() {
@@ -233,13 +253,49 @@ class AttachmentResourceMinIOTest {
                 Arguments.of(
                         (Consumer<UUID>) traceId -> traceResourceClient.deleteTrace(traceId, TEST_WORKSPACE, API_KEY)),
                 Arguments.of((Consumer<UUID>) traceId -> traceResourceClient
-                        .deleteTraces(BatchDelete.builder().ids(Set.of(traceId)).build(), TEST_WORKSPACE, API_KEY)));
+                        .deleteTraces(BatchDeleteByProject.builder().ids(Set.of(traceId)).build(), TEST_WORKSPACE,
+                                API_KEY)));
+    }
+
+    @Test
+    void deleteTraceScopedToProjectLeavesOtherProjectsAttachmentUntouched() throws IOException {
+        // Same trace id ingested into two projects (externally-supplied ids are not globally unique); each project's
+        // copy gets its own attachment. Deleting the id scoped to one project must cascade-delete only that project's
+        // attachment and leave the other project's attachment intact - no cross-project over-delete.
+        var sharedTraceId = generator.generate();
+        var trace1 = createTrace().toBuilder().id(sharedTraceId).lastUpdatedAt(null).build();
+        var trace2 = createTrace().toBuilder().id(sharedTraceId).lastUpdatedAt(null).build();
+        traceResourceClient.batchCreateTraces(List.of(trace1, trace2), API_KEY, TEST_WORKSPACE);
+
+        var projectId1 = projectService.findByNames(WORKSPACE_ID, List.of(trace1.projectName())).getFirst().id();
+        var projectId2 = projectService.findByNames(WORKSPACE_ID, List.of(trace2.projectName())).getFirst().id();
+
+        uploadFile(trace1.projectName(), EntityType.TRACE, sharedTraceId);
+        uploadFile(trace2.projectName(), EntityType.TRACE, sharedTraceId);
+
+        assertThat(attachmentResourceClient.attachmentList(projectId1, EntityType.TRACE, sharedTraceId, baseURIEncoded,
+                API_KEY, TEST_WORKSPACE, 200).total()).isEqualTo(1);
+        assertThat(attachmentResourceClient.attachmentList(projectId2, EntityType.TRACE, sharedTraceId, baseURIEncoded,
+                API_KEY, TEST_WORKSPACE, 200).total()).isEqualTo(1);
+
+        // Delete the reused id scoped to project 1 only.
+        traceResourceClient.deleteTraces(
+                BatchDeleteByProject.builder().ids(Set.of(sharedTraceId)).projectId(projectId1).build(),
+                TEST_WORKSPACE, API_KEY);
+
+        // Project 1's attachment is cascade-deleted; project 2's attachment survives.
+        Awaitility.await().pollInterval(500, TimeUnit.MILLISECONDS).untilAsserted(() -> assertThat(
+                attachmentResourceClient.attachmentList(projectId1, EntityType.TRACE, sharedTraceId, baseURIEncoded,
+                        API_KEY, TEST_WORKSPACE, 200))
+                .isEqualTo(Attachment.AttachmentPage.empty(1)));
+        assertThat(attachmentResourceClient.attachmentList(projectId2, EntityType.TRACE, sharedTraceId, baseURIEncoded,
+                API_KEY, TEST_WORKSPACE, 200).total()).isEqualTo(1);
     }
 
     Pair<StartMultipartUploadRequest, byte[]> uploadFile(String projectName, EntityType type, UUID entityId)
             throws IOException {
         // Initiate upload
-        StartMultipartUploadRequest startUploadRequest = prepareStartUploadRequest();
+        StartMultipartUploadRequest startUploadRequest = prepareStartUploadRequest(baseURIEncoded);
         if (projectName != null) {
             startUploadRequest = startUploadRequest.toBuilder()
                     .projectName(projectName)
@@ -268,7 +324,7 @@ class AttachmentResourceMinIOTest {
         return Pair.of(startUploadRequest, fileData);
     }
 
-    private StartMultipartUploadRequest prepareStartUploadRequest() {
+    private StartMultipartUploadRequest prepareStartUploadRequest(String baseURIEncoded) {
         return factory.manufacturePojo(StartMultipartUploadRequest.class)
                 .toBuilder()
                 .path(baseURIEncoded)

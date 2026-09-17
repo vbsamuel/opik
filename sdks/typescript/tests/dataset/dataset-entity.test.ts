@@ -10,7 +10,11 @@ import {
   JsonParseError,
 } from "@/errors/common/errors";
 import { logger } from "@/utils/logger";
-import { mockAPIFunction, mockAPIFunctionWithStream } from "../mockUtils";
+import {
+  createMockHttpResponsePromise,
+  mockAPIFunction,
+  mockAPIFunctionWithStream,
+} from "../mockUtils";
 import { DatasetItemWriteSource } from "@/rest_api/api";
 
 describe("Dataset entity operations", () => {
@@ -87,6 +91,7 @@ describe("Dataset entity operations", () => {
             source: DatasetItemWriteSource.Sdk,
           }),
         ],
+        batchGroupId: expect.any(String),
       });
     });
 
@@ -114,7 +119,40 @@ describe("Dataset entity operations", () => {
             source: DatasetItemWriteSource.Sdk,
           }),
         ],
+        batchGroupId: expect.any(String),
       });
+    });
+
+    it("should use same batchGroupId for all batches in single insert", async () => {
+      // Create 2500 items (requires 3 batches)
+      const items = Array.from({ length: 2500 }, (_, i) => ({
+        id: `item-${i}`,
+        input: `input-${i}`,
+      }));
+
+      await dataset.insert(items);
+
+      expect(createOrUpdateDatasetItemsSpy).toHaveBeenCalledTimes(3);
+
+      const batchGroupId1 = createOrUpdateDatasetItemsSpy.mock.calls[0][0].batchGroupId;
+      const batchGroupId2 = createOrUpdateDatasetItemsSpy.mock.calls[1][0].batchGroupId;
+      const batchGroupId3 = createOrUpdateDatasetItemsSpy.mock.calls[2][0].batchGroupId;
+
+      expect(batchGroupId1).toBeDefined();
+      expect(batchGroupId1).toBe(batchGroupId2);
+      expect(batchGroupId2).toBe(batchGroupId3);
+    });
+
+    it("should use different batchGroupIds for separate insert calls", async () => {
+      await dataset.insert([{ id: "item-1", input: "input-1" }]);
+      await dataset.insert([{ id: "item-2", input: "input-2" }]);
+
+      expect(createOrUpdateDatasetItemsSpy).toHaveBeenCalledTimes(2);
+
+      const batchGroupId1 = createOrUpdateDatasetItemsSpy.mock.calls[0][0].batchGroupId;
+      const batchGroupId2 = createOrUpdateDatasetItemsSpy.mock.calls[1][0].batchGroupId;
+
+      expect(batchGroupId1).not.toBe(batchGroupId2);
     });
   });
 
@@ -147,6 +185,7 @@ describe("Dataset entity operations", () => {
             source: DatasetItemWriteSource.Sdk,
           }),
         ],
+        batchGroupId: expect.any(String),
       });
     });
 
@@ -175,6 +214,7 @@ describe("Dataset entity operations", () => {
 
       expect(deleteDatasetItemsSpy).toHaveBeenCalledWith({
         itemIds: ["item-1", "item-2"],
+        batchGroupId: expect.any(String),
       });
     });
 
@@ -201,20 +241,42 @@ describe("Dataset entity operations", () => {
       // First batch should have items 0-99
       expect(deleteDatasetItemsSpy).toHaveBeenNthCalledWith(1, {
         itemIds: expect.arrayContaining(["item-0", "item-99"]),
+        batchGroupId: expect.any(String),
       });
       expect(deleteDatasetItemsSpy.mock.calls[0][0].itemIds.length).toBe(100);
 
       // Second batch should have items 100-199
       expect(deleteDatasetItemsSpy).toHaveBeenNthCalledWith(2, {
         itemIds: expect.arrayContaining(["item-100", "item-199"]),
+        batchGroupId: expect.any(String),
       });
       expect(deleteDatasetItemsSpy.mock.calls[1][0].itemIds.length).toBe(100);
 
       // Third batch should have items 200-249
       expect(deleteDatasetItemsSpy).toHaveBeenNthCalledWith(3, {
         itemIds: expect.arrayContaining(["item-200", "item-249"]),
+        batchGroupId: expect.any(String),
       });
       expect(deleteDatasetItemsSpy.mock.calls[2][0].itemIds.length).toBe(50);
+
+      // All batches should have the same batchGroupId
+      const batchGroupId1 = deleteDatasetItemsSpy.mock.calls[0][0].batchGroupId;
+      const batchGroupId2 = deleteDatasetItemsSpy.mock.calls[1][0].batchGroupId;
+      const batchGroupId3 = deleteDatasetItemsSpy.mock.calls[2][0].batchGroupId;
+      expect(batchGroupId1).toBe(batchGroupId2);
+      expect(batchGroupId2).toBe(batchGroupId3);
+    });
+
+    it("should use different batchGroupIds for separate delete calls", async () => {
+      await dataset.delete(["item-1"]);
+      await dataset.delete(["item-2"]);
+
+      expect(deleteDatasetItemsSpy).toHaveBeenCalledTimes(2);
+
+      const batchGroupId1 = deleteDatasetItemsSpy.mock.calls[0][0].batchGroupId;
+      const batchGroupId2 = deleteDatasetItemsSpy.mock.calls[1][0].batchGroupId;
+
+      expect(batchGroupId1).not.toBe(batchGroupId2);
     });
   });
 
@@ -300,6 +362,37 @@ describe("Dataset entity operations", () => {
         lastRetrievedId: "last-item-id", // Should use the provided last item ID
         steamLimit: 10,
       });
+    });
+  });
+
+  describe("getRawItems", () => {
+    it("should forward lastRetrievedId to streamDatasetItems", async () => {
+      streamDatasetItemsSpy.mockReturnValueOnce(
+        mockAPIFunctionWithStream("[]")
+      );
+
+      await dataset.getRawItems(5, "cursor-abc");
+
+      expect(streamDatasetItemsSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          lastRetrievedId: "cursor-abc",
+          steamLimit: 5,
+        })
+      );
+    });
+
+    it("should pass undefined lastRetrievedId when not provided", async () => {
+      streamDatasetItemsSpy.mockReturnValueOnce(
+        mockAPIFunctionWithStream("[]")
+      );
+
+      await dataset.getRawItems(5);
+
+      expect(streamDatasetItemsSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          lastRetrievedId: undefined,
+        })
+      );
     });
   });
 
@@ -422,6 +515,142 @@ describe("Dataset entity operations", () => {
       await expect(dataset.insertFromJson(invalidItemsJson)).rejects.toThrow(
         JsonItemNotObjectError
       );
+    });
+  });
+
+  describe("getItemsCount", () => {
+    it("should return the item count from the API", async () => {
+      vi.spyOn(
+        opikClient.api.datasets,
+        "getDatasetByIdentifier"
+      ).mockReturnValue(
+        createMockHttpResponsePromise({
+          name: "test-dataset",
+          datasetItemsCount: 42,
+        })
+      );
+
+      const count = await dataset.getItemsCount();
+      expect(count).toBe(42);
+    });
+
+    it("should return undefined when the count is not available", async () => {
+      vi.spyOn(
+        opikClient.api.datasets,
+        "getDatasetByIdentifier"
+      ).mockReturnValue(
+        createMockHttpResponsePromise({ name: "test-dataset" })
+      );
+
+      const count = await dataset.getItemsCount();
+      expect(count).toBeUndefined();
+    });
+
+    it("should cache the count and only call the API once", async () => {
+      const spy = vi
+        .spyOn(opikClient.api.datasets, "getDatasetByIdentifier")
+        .mockReturnValue(
+          createMockHttpResponsePromise({
+            name: "test-dataset",
+            datasetItemsCount: 10,
+          })
+        );
+
+      const count1 = await dataset.getItemsCount();
+      const count2 = await dataset.getItemsCount();
+
+      expect(count1).toBe(10);
+      expect(count2).toBe(10);
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+
+    it("should invalidate cache after insert", async () => {
+      const spy = vi
+        .spyOn(opikClient.api.datasets, "getDatasetByIdentifier")
+        .mockReturnValue(
+          createMockHttpResponsePromise({
+            name: "test-dataset",
+            datasetItemsCount: 5,
+          })
+        );
+
+      // First call: fetches from API
+      await dataset.getItemsCount();
+      expect(spy).toHaveBeenCalledTimes(1);
+
+      // Insert an item (triggers cache invalidation)
+      await dataset.insert([{ id: "new-item", input: "test" }]);
+
+      // Update mock to return new count
+      spy.mockReturnValue(
+        createMockHttpResponsePromise({
+          name: "test-dataset",
+          datasetItemsCount: 6,
+        })
+      );
+
+      // Second call: should fetch again
+      const count = await dataset.getItemsCount();
+      expect(count).toBe(6);
+      expect(spy).toHaveBeenCalledTimes(2);
+    });
+
+    it("should invalidate cache after delete", async () => {
+      const spy = vi
+        .spyOn(opikClient.api.datasets, "getDatasetByIdentifier")
+        .mockReturnValue(
+          createMockHttpResponsePromise({
+            name: "test-dataset",
+            datasetItemsCount: 5,
+          })
+        );
+
+      // First call: fetches from API
+      await dataset.getItemsCount();
+      expect(spy).toHaveBeenCalledTimes(1);
+
+      // Delete an item (triggers cache invalidation)
+      await dataset.delete(["item-1"]);
+
+      // Update mock to return new count
+      spy.mockReturnValue(
+        createMockHttpResponsePromise({
+          name: "test-dataset",
+          datasetItemsCount: 4,
+        })
+      );
+
+      // Second call: should fetch again
+      const count = await dataset.getItemsCount();
+      expect(count).toBe(4);
+      expect(spy).toHaveBeenCalledTimes(2);
+    });
+
+    it("should pass the dataset name and project name to the API", async () => {
+      const datasetWithProject = new Dataset(
+        {
+          id: "ds-with-project",
+          name: "test-dataset-proj",
+          projectName: "my-project",
+        },
+        opikClient
+      );
+
+      const spy = vi
+        .spyOn(opikClient.api.datasets, "getDatasetByIdentifier")
+        .mockReturnValue(
+          createMockHttpResponsePromise({
+            name: "test-dataset-proj",
+            datasetItemsCount: 10,
+          })
+        );
+
+      await datasetWithProject.getItemsCount();
+
+      expect(spy).toHaveBeenCalledWith({
+        datasetName: "test-dataset-proj",
+        projectName: "my-project",
+      });
     });
   });
 

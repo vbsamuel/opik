@@ -1,23 +1,21 @@
 import logging
 from typing import (
     Any,
-    AsyncIterator,
     Callable,
     Dict,
-    Iterator,
     List,
     Optional,
     Tuple,
-    Union,
 )
 
 import openai
 import openai.lib.streaming.chat
-from openai import _types as _openai_types
-from openai.types.chat import chat_completion, chat_completion_chunk
+from openai import _legacy_response, _types as _openai_types
+from openai.types.chat import chat_completion
 from typing_extensions import override
 
-from opik import dict_utils, llm_usage
+import opik.dict_utils as dict_utils
+import opik.llm_usage as llm_usage
 from opik.api_objects import span
 from opik.decorator import arguments_helpers, base_track_decorator
 from opik.integrations.openai import chat_completion_chunks_aggregator
@@ -50,17 +48,15 @@ class OpenaiChatCompletionsTrackDecorator(base_track_decorator.BaseTrackDecorato
         self,
         func: Callable,
         track_options: arguments_helpers.TrackOptions,
-        args: Optional[Tuple],
-        kwargs: Optional[Dict[str, Any]],
+        args: Tuple,
+        kwargs: Dict[str, Any],
     ) -> arguments_helpers.StartSpanParameters:
-        assert (
-            kwargs is not None
-        ), "Expected kwargs to be not None in chat.completion.create(**kwargs), chat.completion.parse(**kwargs) or chat.completion.stream(**kwargs)"
+        assert kwargs is not None, (
+            "Expected kwargs to be not None in chat.completion.create(**kwargs), chat.completion.parse(**kwargs) or chat.completion.stream(**kwargs)"
+        )
 
         name = track_options.name if track_options.name is not None else func.__name__
-        if _is_completions_stream_call(
-            name_passed_to_track_decorator=name, kwargs=kwargs
-        ):
+        if kwargs.get("stream") is True:
             kwargs = _remove_not_given_sentinel_values(kwargs)
             name = "chat_completion_stream"
 
@@ -99,6 +95,8 @@ class OpenaiChatCompletionsTrackDecorator(base_track_decorator.BaseTrackDecorato
         capture_output: bool,
         current_span_data: span.SpanData,
     ) -> arguments_helpers.EndSpanParameters:
+        output = _parse_raw_response(output)
+
         assert isinstance(
             output,
             (
@@ -112,6 +110,9 @@ class OpenaiChatCompletionsTrackDecorator(base_track_decorator.BaseTrackDecorato
 
         opik_usage = None
         if result_dict.get("usage") is not None:
+            # Usage is always parsed with the OpenAI converter: here "openai"
+            # denotes the usage payload format, not the span's provider (which
+            # may be overridden when the client targets an OpenAI-compatible API).
             opik_usage = llm_usage.try_build_opik_usage_or_log_error(
                 provider=LLMProvider.OPENAI,
                 usage=result_dict["usage"],
@@ -136,20 +137,11 @@ class OpenaiChatCompletionsTrackDecorator(base_track_decorator.BaseTrackDecorato
         self,
         output: Any,
         capture_output: bool,
-        generations_aggregator: Optional[
-            Callable[
-                [List[chat_completion_chunk.ChatCompletionChunk]],
-                chat_completion_chunks_aggregator.ChatCompletionChunksAggregated,
-            ]
-        ],
-    ) -> Union[
-        None,
-        Iterator[chat_completion_chunk.ChatCompletionChunk],
-        AsyncIterator[chat_completion_chunk.ChatCompletionChunk],
-    ]:
-        assert (
-            generations_aggregator is not None
-        ), "OpenAI decorator will always get aggregator function as input"
+        generations_aggregator: Optional[Callable[[List[Any]], Any]],
+    ) -> Optional[Any]:
+        assert generations_aggregator is not None, (
+            "OpenAI decorator will always get aggregator function as input"
+        )
 
         if isinstance(output, openai.Stream):
             span_to_end, trace_to_end = base_track_decorator.pop_end_candidates()
@@ -198,6 +190,19 @@ class OpenaiChatCompletionsTrackDecorator(base_track_decorator.BaseTrackDecorato
         return NOT_A_STREAM
 
 
+def _parse_raw_response(output: Any) -> Any:
+    """
+    Callers like CrewAI and LiteLLM use `chat.completions.with_raw_response.create(...)`
+    to read response headers, which returns the unparsed HTTP response instead of a
+    ChatCompletion. `parse()` caches its result, so the caller still gets the same
+    object from its own `parse()` call.
+    """
+    if isinstance(output, _legacy_response.LegacyAPIResponse):
+        return output.parse()
+
+    return output
+
+
 def _remove_not_given_sentinel_values(dict_: Dict[str, Any]) -> Dict[str, Any]:
     """
     Under the hood of `stream()` method openai calls `create(..,stream=True,..)`
@@ -207,17 +212,5 @@ def _remove_not_given_sentinel_values(dict_: Dict[str, Any]) -> Dict[str, Any]:
         key: value
         for key, value in dict_.items()
         if value is not _openai_types.NOT_GIVEN
+        and not isinstance(value, _openai_types.Omit)
     }
-
-
-def _is_completions_stream_call(
-    name_passed_to_track_decorator: str, kwargs: Dict[str, Any]
-) -> bool:
-    if not name_passed_to_track_decorator == "chat_completion_create":
-        return False
-
-    for _, value in kwargs.items():
-        if value is _openai_types.NOT_GIVEN:
-            return True
-
-    return False

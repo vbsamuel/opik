@@ -13,6 +13,7 @@ from . import (
     file_upload_monitor,
     thread_pool,
     file_uploader,
+    types as upload_types,
 )
 from .. import format_helpers, synchronization
 from ..message_processing import messages
@@ -25,6 +26,7 @@ LOGGER = logging.getLogger(__name__)
 class UploadResult:
     future: Future
     monitor: file_upload_monitor.FileUploadMonitor
+    upload_options: upload_options.FileUploadOptions
 
     def ready(self) -> bool:
         """Allows to check if wrapped Future successfully finished"""
@@ -33,9 +35,28 @@ class UploadResult:
     def successful(self, timeout: Optional[float] = None) -> bool:
         """Allows to check if wrapped Future completed without raising an exception"""
         try:
-            return self.future.exception(timeout) is None
-        except (CancelledError, TimeoutError):
-            return False
+            exception = self.future.exception(timeout)
+            if exception is None:
+                return True
+
+            raise exception
+        except (CancelledError, TimeoutError) as e:
+            LOGGER.warning(
+                "Timeout while waiting for the result of file '%s' upload. Error: %s",
+                self.upload_options.file_name,
+                e,
+            )
+        except Exception as exception:
+            LOGGER.error(
+                "Failed to upload file with name '%s' from path [%s] with size [%s]. Error: %s",
+                self.upload_options.file_name,
+                self.upload_options.file_path,
+                format_helpers.format_bytes(self.upload_options.file_size),
+                exception,
+                exc_info=True,
+            )
+
+        return False
 
 
 class FileUploadManagerMonitor:
@@ -116,18 +137,32 @@ class FileUploadManager(base_upload_manager.BaseFileUploadManager):
         self._upload_results: List[UploadResult] = []
         self.closed = False
 
-    def upload(self, message: messages.BaseMessage) -> None:
+    def upload(
+        self,
+        message: messages.BaseMessage,
+        on_upload_success: Optional[upload_types.OnUploadSuccessCallback],
+        on_upload_failed: Optional[upload_types.OnUploadFailureCallback],
+    ) -> None:
         if isinstance(message, messages.CreateAttachmentMessage):
-            self.upload_attachment(message)
+            self.upload_attachment(
+                attachment=message,
+                on_upload_success=on_upload_success,
+                on_upload_failed=on_upload_failed,
+            )
         else:
             raise ValueError(f"Message {message} is not supported for file upload.")
 
-    def upload_attachment(self, attachment: messages.CreateAttachmentMessage) -> None:
-        assert isinstance(
-            attachment, messages.CreateAttachmentMessage
-        ), "Wrong attachment message type"
-
-        options = upload_options.file_upload_options_from_attachment(attachment)
+    def upload_attachment(
+        self,
+        attachment: messages.CreateAttachmentMessage,
+        on_upload_success: Optional[upload_types.OnUploadSuccessCallback],
+        on_upload_failed: Optional[upload_types.OnUploadFailureCallback],
+    ) -> None:
+        options = upload_options.file_upload_options_from_attachment(
+            attachment=attachment,
+            on_upload_success=on_upload_success,
+            on_upload_failed=on_upload_failed,
+        )
         self._submit_upload(
             uploader=file_uploader.upload_attachment,
             options=options,
@@ -154,7 +189,9 @@ class FileUploadManager(base_upload_manager.BaseFileUploadManager):
             "upload_httpx_client": self._httpx_client,
         }
         future = self._executor.submit(uploader, **kwargs)
-        self._upload_results.append(UploadResult(future, monitor))
+        self._upload_results.append(
+            UploadResult(future, monitor=monitor, upload_options=options)
+        )
 
     def all_done(self) -> bool:
         return all(result.ready() for result in self._upload_results)
@@ -228,6 +265,6 @@ class FileUploadManager(base_upload_manager.BaseFileUploadManager):
 
         return False
 
-    def close(self) -> None:
-        self._executor.shutdown(wait=True)
+    def close(self, wait: bool = True) -> None:
+        self._executor.shutdown(wait=wait)
         self.closed = True

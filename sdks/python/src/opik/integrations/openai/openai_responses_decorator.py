@@ -6,13 +6,14 @@ from typing import (
     List,
     Optional,
     Tuple,
-    Union,
 )
 from typing_extensions import override
 
 import openai
 
-from opik import LLMProvider, dict_utils, llm_usage
+from opik.types import LLMProvider
+import opik.dict_utils as dict_utils
+import opik.llm_usage as llm_usage
 from opik.api_objects import span
 from opik.decorator import arguments_helpers, base_track_decorator
 from openai.types import responses as openai_responses
@@ -49,12 +50,12 @@ class OpenaiResponsesTrackDecorator(base_track_decorator.BaseTrackDecorator):
         self,
         func: Callable,
         track_options: arguments_helpers.TrackOptions,
-        args: Optional[Tuple],
-        kwargs: Optional[Dict[str, Any]],
+        args: Tuple,
+        kwargs: Dict[str, Any],
     ) -> arguments_helpers.StartSpanParameters:
-        assert (
-            kwargs is not None
-        ), "Expected kwargs to be not None in responses.create(**kwargs) or responses.parse(**kwargs)"
+        assert kwargs is not None, (
+            "Expected kwargs to be not None in responses.create(**kwargs) or responses.parse(**kwargs)"
+        )
 
         name = track_options.name if track_options.name is not None else func.__name__
 
@@ -103,6 +104,9 @@ class OpenaiResponsesTrackDecorator(base_track_decorator.BaseTrackDecorator):
 
         opik_usage = None
         if result_dict.get("usage") is not None:
+            # Usage is always parsed with the OpenAI converter: here "openai"
+            # denotes the usage payload format, not the span's provider (which
+            # may be overridden when the client targets an OpenAI-compatible API).
             opik_usage = llm_usage.try_build_opik_usage_or_log_error(
                 provider=LLMProvider.OPENAI,
                 usage=result_dict["usage"],
@@ -127,19 +131,11 @@ class OpenaiResponsesTrackDecorator(base_track_decorator.BaseTrackDecorator):
         self,
         output: Any,
         capture_output: bool,
-        generations_aggregator: Optional[
-            Callable[
-                [List[openai_responses.ResponseStreamEvent]], openai_responses.Response
-            ]
-        ],
-    ) -> Union[
-        None,
-        openai.Stream,
-        openai.AsyncStream,
-    ]:
-        assert (
-            generations_aggregator is not None
-        ), "OpenAI decorator will always get aggregator function as input"
+        generations_aggregator: Optional[Callable[[List[Any]], Any]],
+    ) -> Optional[Any]:
+        assert generations_aggregator is not None, (
+            "OpenAI decorator will always get aggregator function as input"
+        )
 
         if isinstance(output, openai.Stream):
             span_to_end, trace_to_end = base_track_decorator.pop_end_candidates()

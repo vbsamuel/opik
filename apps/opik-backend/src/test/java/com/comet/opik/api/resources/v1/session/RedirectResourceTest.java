@@ -35,8 +35,8 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.testcontainers.clickhouse.ClickHouseContainer;
 import org.testcontainers.containers.GenericContainer;
-import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.lifecycle.Startables;
+import org.testcontainers.mysql.MySQLContainer;
 import ru.vyarus.dropwizard.guice.test.ClientSupport;
 import ru.vyarus.dropwizard.guice.test.jupiter.ext.TestDropwizardAppExtension;
 import uk.co.jemos.podam.api.PodamFactory;
@@ -67,7 +67,7 @@ class RedirectResourceTest {
     private static final String API_KEY = UUID.randomUUID().toString();
     private static final String NON_EXISTING_WORKSPACE_NAME = UUID.randomUUID().toString();
     private static final String WORKSPACE_NAME = UUID.randomUUID().toString();
-    private static final String PROJECT_REDIRECT_URL = "%s/%s/projects/%s/traces";
+    private static final String TRACE_REDIRECT_URL = "%s/%s/projects/%s/traces?tab=logs&logsType=traces&trace=%s";
     private static final String DATASET_REDIRECT_URL = "%s/%s/datasets/%s/items";
     private static final String EXPERIMENT_REDIRECT_URL = "%s/%s/experiments/%s/compare?experiments=%s";
     private static final String OPTIMIZATION_REDIRECT_URL = "%s/%s/optimizations/%s/compare?optimizations=%s";
@@ -77,7 +77,7 @@ class RedirectResourceTest {
     private final GenericContainer<?> ZOOKEEPER_CONTAINER = ClickHouseContainerUtils.newZookeeperContainer();
     private final ClickHouseContainer CLICKHOUSE_CONTAINER = ClickHouseContainerUtils
             .newClickHouseContainer(ZOOKEEPER_CONTAINER);
-    private final MySQLContainer<?> MYSQL = MySQLContainerUtils.newMySQLContainer();
+    private final MySQLContainer MYSQL = MySQLContainerUtils.newMySQLContainer();
     private final WireMockUtils.WireMockRuntime wireMock;
 
     @RegisterApp
@@ -180,8 +180,8 @@ class RedirectResourceTest {
                 workspaceNameForRedirectRequest, getBaseUrlEncoded(), expectedStatus);
         if (expectedStatus == 303) {
             assertThat(redirectURL).isEqualTo(
-                    PROJECT_REDIRECT_URL.formatted(wireMock.runtimeInfo().getHttpBaseUrl(), workspaceName,
-                            trace.projectId()));
+                    TRACE_REDIRECT_URL.formatted(wireMock.runtimeInfo().getHttpBaseUrl(), workspaceName,
+                            trace.projectId(), trace.id()));
         }
     }
 
@@ -195,7 +195,7 @@ class RedirectResourceTest {
     @MethodSource("parameters")
     @DisplayName("Create dataset redirect URL")
     void datasetsRedirectTest(String workspaceName, String workspaceNameForRedirectRequest, int expectedStatus) {
-        var dataset = factory.manufacturePojo(Dataset.class);
+        var dataset = buildDataset();
         var datasetId = datasetResourceClient.createDataset(dataset, API_KEY, workspaceName);
 
         var redirectURL = redirectResourceClient.datasetsRedirect(datasetId, UUID.randomUUID().toString(),
@@ -207,6 +207,10 @@ class RedirectResourceTest {
         }
     }
 
+    private Dataset buildDataset() {
+        return DatasetResourceClient.buildDataset(factory);
+    }
+
     @Test
     void datasetsRedirectUrlNoDataset() {
         redirectResourceClient.datasetsRedirect(UUID.randomUUID(), UUID.randomUUID().toString(), null, "path", 404);
@@ -216,7 +220,7 @@ class RedirectResourceTest {
     @MethodSource("parameters")
     @DisplayName("Create experiment redirect URL")
     void experimentsRedirectTest(String workspaceName, String workspaceNameForRedirectRequest, int expectedStatus) {
-        var dataset = factory.manufacturePojo(Dataset.class);
+        var dataset = buildDataset();
         var datasetId = datasetResourceClient.createDataset(dataset, API_KEY, workspaceName);
 
         var experimentId = UUID.randomUUID();
@@ -234,7 +238,7 @@ class RedirectResourceTest {
     @MethodSource("parameters")
     @DisplayName("Create optimization redirect URL")
     void optimizationsRedirectTest(String workspaceName, String workspaceNameForRedirectRequest, int expectedStatus) {
-        var dataset = factory.manufacturePojo(Dataset.class);
+        var dataset = buildDataset();
         var datasetId = datasetResourceClient.createDataset(dataset, API_KEY, workspaceName);
 
         var optimizationId = UUID.randomUUID();

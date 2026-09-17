@@ -5,9 +5,14 @@ import typing
 
 from ..core.client_wrapper import AsyncClientWrapper, SyncClientWrapper
 from ..core.request_options import RequestOptions
-from ..types.json_node_write import JsonNodeWrite
+from ..types.error_info import ErrorInfo
+from ..types.error_info_write import ErrorInfoWrite
+from ..types.json_list_string import JsonListString
+from ..types.json_list_string_write import JsonListStringWrite
 from ..types.optimization_page_public import OptimizationPagePublic
 from ..types.optimization_public import OptimizationPublic
+from ..types.optimization_studio_config_write import OptimizationStudioConfigWrite
+from ..types.optimization_studio_log import OptimizationStudioLog
 from ..types.optimization_write_status import OptimizationWriteStatus
 from .raw_client import AsyncRawOptimizationsClient, RawOptimizationsClient
 from .types.optimization_update_status import OptimizationUpdateStatus
@@ -38,7 +43,10 @@ class OptimizationsClient:
         size: typing.Optional[int] = None,
         dataset_id: typing.Optional[str] = None,
         name: typing.Optional[str] = None,
+        dataset_name: typing.Optional[str] = None,
         dataset_deleted: typing.Optional[bool] = None,
+        project_id: typing.Optional[str] = None,
+        filters: typing.Optional[str] = None,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> OptimizationPagePublic:
         """
@@ -54,7 +62,13 @@ class OptimizationsClient:
 
         name : typing.Optional[str]
 
+        dataset_name : typing.Optional[str]
+
         dataset_deleted : typing.Optional[bool]
+
+        project_id : typing.Optional[str]
+
+        filters : typing.Optional[str]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -75,7 +89,10 @@ class OptimizationsClient:
             size=size,
             dataset_id=dataset_id,
             name=name,
+            dataset_name=dataset_name,
             dataset_deleted=dataset_deleted,
+            project_id=project_id,
+            filters=filters,
             request_options=request_options,
         )
         return _response.data
@@ -88,7 +105,11 @@ class OptimizationsClient:
         status: OptimizationWriteStatus,
         id: typing.Optional[str] = OMIT,
         name: typing.Optional[str] = OMIT,
-        metadata: typing.Optional[JsonNodeWrite] = OMIT,
+        project_name: typing.Optional[str] = OMIT,
+        project_id: typing.Optional[str] = OMIT,
+        metadata: typing.Optional[JsonListStringWrite] = OMIT,
+        studio_config: typing.Optional[OptimizationStudioConfigWrite] = OMIT,
+        error_info: typing.Optional[ErrorInfoWrite] = OMIT,
         last_updated_at: typing.Optional[dt.datetime] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> None:
@@ -107,7 +128,17 @@ class OptimizationsClient:
 
         name : typing.Optional[str]
 
-        metadata : typing.Optional[JsonNodeWrite]
+        project_name : typing.Optional[str]
+            Project name. Creates project if it doesn't exist. Ignored when project_id is provided.
+
+        project_id : typing.Optional[str]
+            Project ID. Takes precedence over project_name when both are provided.
+
+        metadata : typing.Optional[JsonListStringWrite]
+
+        studio_config : typing.Optional[OptimizationStudioConfigWrite]
+
+        error_info : typing.Optional[ErrorInfoWrite]
 
         last_updated_at : typing.Optional[dt.datetime]
 
@@ -130,7 +161,11 @@ class OptimizationsClient:
             status=status,
             id=id,
             name=name,
+            project_name=project_name,
+            project_id=project_id,
             metadata=metadata,
+            studio_config=studio_config,
+            error_info=error_info,
             last_updated_at=last_updated_at,
             request_options=request_options,
         )
@@ -144,7 +179,11 @@ class OptimizationsClient:
         status: OptimizationWriteStatus,
         id: typing.Optional[str] = OMIT,
         name: typing.Optional[str] = OMIT,
-        metadata: typing.Optional[JsonNodeWrite] = OMIT,
+        project_name: typing.Optional[str] = OMIT,
+        project_id: typing.Optional[str] = OMIT,
+        metadata: typing.Optional[JsonListStringWrite] = OMIT,
+        studio_config: typing.Optional[OptimizationStudioConfigWrite] = OMIT,
+        error_info: typing.Optional[ErrorInfoWrite] = OMIT,
         last_updated_at: typing.Optional[dt.datetime] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> None:
@@ -163,7 +202,17 @@ class OptimizationsClient:
 
         name : typing.Optional[str]
 
-        metadata : typing.Optional[JsonNodeWrite]
+        project_name : typing.Optional[str]
+            Project name. Creates project if it doesn't exist. Ignored when project_id is provided.
+
+        project_id : typing.Optional[str]
+            Project ID. Takes precedence over project_name when both are provided.
+
+        metadata : typing.Optional[JsonListStringWrite]
+
+        studio_config : typing.Optional[OptimizationStudioConfigWrite]
+
+        error_info : typing.Optional[ErrorInfoWrite]
 
         last_updated_at : typing.Optional[dt.datetime]
 
@@ -186,7 +235,11 @@ class OptimizationsClient:
             status=status,
             id=id,
             name=name,
+            project_name=project_name,
+            project_id=project_id,
             metadata=metadata,
+            studio_config=studio_config,
+            error_info=error_info,
             last_updated_at=last_updated_at,
             request_options=request_options,
         )
@@ -251,6 +304,8 @@ class OptimizationsClient:
         *,
         name: typing.Optional[str] = OMIT,
         status: typing.Optional[OptimizationUpdateStatus] = OMIT,
+        error_info: typing.Optional[ErrorInfo] = OMIT,
+        metadata: typing.Optional[JsonListString] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> None:
         """
@@ -263,6 +318,10 @@ class OptimizationsClient:
         name : typing.Optional[str]
 
         status : typing.Optional[OptimizationUpdateStatus]
+
+        error_info : typing.Optional[ErrorInfo]
+
+        metadata : typing.Optional[JsonListString]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -278,8 +337,35 @@ class OptimizationsClient:
         client.optimizations.update_optimizations_by_id(id='id', )
         """
         _response = self._raw_client.update_optimizations_by_id(
-            id, name=name, status=status, request_options=request_options
+            id, name=name, status=status, error_info=error_info, metadata=metadata, request_options=request_options
         )
+        return _response.data
+
+    def get_studio_optimization_logs(
+        self, id: str, *, request_options: typing.Optional[RequestOptions] = None
+    ) -> OptimizationStudioLog:
+        """
+        Get presigned S3 URL for downloading optimization logs
+
+        Parameters
+        ----------
+        id : str
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        OptimizationStudioLog
+            Logs response
+
+        Examples
+        --------
+        from Opik import OpikApi
+        client = OpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        client.optimizations.get_studio_optimization_logs(id='id', )
+        """
+        _response = self._raw_client.get_studio_optimization_logs(id, request_options=request_options)
         return _response.data
 
 
@@ -305,7 +391,10 @@ class AsyncOptimizationsClient:
         size: typing.Optional[int] = None,
         dataset_id: typing.Optional[str] = None,
         name: typing.Optional[str] = None,
+        dataset_name: typing.Optional[str] = None,
         dataset_deleted: typing.Optional[bool] = None,
+        project_id: typing.Optional[str] = None,
+        filters: typing.Optional[str] = None,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> OptimizationPagePublic:
         """
@@ -321,7 +410,13 @@ class AsyncOptimizationsClient:
 
         name : typing.Optional[str]
 
+        dataset_name : typing.Optional[str]
+
         dataset_deleted : typing.Optional[bool]
+
+        project_id : typing.Optional[str]
+
+        filters : typing.Optional[str]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -345,7 +440,10 @@ class AsyncOptimizationsClient:
             size=size,
             dataset_id=dataset_id,
             name=name,
+            dataset_name=dataset_name,
             dataset_deleted=dataset_deleted,
+            project_id=project_id,
+            filters=filters,
             request_options=request_options,
         )
         return _response.data
@@ -358,7 +456,11 @@ class AsyncOptimizationsClient:
         status: OptimizationWriteStatus,
         id: typing.Optional[str] = OMIT,
         name: typing.Optional[str] = OMIT,
-        metadata: typing.Optional[JsonNodeWrite] = OMIT,
+        project_name: typing.Optional[str] = OMIT,
+        project_id: typing.Optional[str] = OMIT,
+        metadata: typing.Optional[JsonListStringWrite] = OMIT,
+        studio_config: typing.Optional[OptimizationStudioConfigWrite] = OMIT,
+        error_info: typing.Optional[ErrorInfoWrite] = OMIT,
         last_updated_at: typing.Optional[dt.datetime] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> None:
@@ -377,7 +479,17 @@ class AsyncOptimizationsClient:
 
         name : typing.Optional[str]
 
-        metadata : typing.Optional[JsonNodeWrite]
+        project_name : typing.Optional[str]
+            Project name. Creates project if it doesn't exist. Ignored when project_id is provided.
+
+        project_id : typing.Optional[str]
+            Project ID. Takes precedence over project_name when both are provided.
+
+        metadata : typing.Optional[JsonListStringWrite]
+
+        studio_config : typing.Optional[OptimizationStudioConfigWrite]
+
+        error_info : typing.Optional[ErrorInfoWrite]
 
         last_updated_at : typing.Optional[dt.datetime]
 
@@ -403,7 +515,11 @@ class AsyncOptimizationsClient:
             status=status,
             id=id,
             name=name,
+            project_name=project_name,
+            project_id=project_id,
             metadata=metadata,
+            studio_config=studio_config,
+            error_info=error_info,
             last_updated_at=last_updated_at,
             request_options=request_options,
         )
@@ -417,7 +533,11 @@ class AsyncOptimizationsClient:
         status: OptimizationWriteStatus,
         id: typing.Optional[str] = OMIT,
         name: typing.Optional[str] = OMIT,
-        metadata: typing.Optional[JsonNodeWrite] = OMIT,
+        project_name: typing.Optional[str] = OMIT,
+        project_id: typing.Optional[str] = OMIT,
+        metadata: typing.Optional[JsonListStringWrite] = OMIT,
+        studio_config: typing.Optional[OptimizationStudioConfigWrite] = OMIT,
+        error_info: typing.Optional[ErrorInfoWrite] = OMIT,
         last_updated_at: typing.Optional[dt.datetime] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> None:
@@ -436,7 +556,17 @@ class AsyncOptimizationsClient:
 
         name : typing.Optional[str]
 
-        metadata : typing.Optional[JsonNodeWrite]
+        project_name : typing.Optional[str]
+            Project name. Creates project if it doesn't exist. Ignored when project_id is provided.
+
+        project_id : typing.Optional[str]
+            Project ID. Takes precedence over project_name when both are provided.
+
+        metadata : typing.Optional[JsonListStringWrite]
+
+        studio_config : typing.Optional[OptimizationStudioConfigWrite]
+
+        error_info : typing.Optional[ErrorInfoWrite]
 
         last_updated_at : typing.Optional[dt.datetime]
 
@@ -462,7 +592,11 @@ class AsyncOptimizationsClient:
             status=status,
             id=id,
             name=name,
+            project_name=project_name,
+            project_id=project_id,
             metadata=metadata,
+            studio_config=studio_config,
+            error_info=error_info,
             last_updated_at=last_updated_at,
             request_options=request_options,
         )
@@ -533,6 +667,8 @@ class AsyncOptimizationsClient:
         *,
         name: typing.Optional[str] = OMIT,
         status: typing.Optional[OptimizationUpdateStatus] = OMIT,
+        error_info: typing.Optional[ErrorInfo] = OMIT,
+        metadata: typing.Optional[JsonListString] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> None:
         """
@@ -545,6 +681,10 @@ class AsyncOptimizationsClient:
         name : typing.Optional[str]
 
         status : typing.Optional[OptimizationUpdateStatus]
+
+        error_info : typing.Optional[ErrorInfo]
+
+        metadata : typing.Optional[JsonListString]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -563,6 +703,36 @@ class AsyncOptimizationsClient:
         asyncio.run(main())
         """
         _response = await self._raw_client.update_optimizations_by_id(
-            id, name=name, status=status, request_options=request_options
+            id, name=name, status=status, error_info=error_info, metadata=metadata, request_options=request_options
         )
+        return _response.data
+
+    async def get_studio_optimization_logs(
+        self, id: str, *, request_options: typing.Optional[RequestOptions] = None
+    ) -> OptimizationStudioLog:
+        """
+        Get presigned S3 URL for downloading optimization logs
+
+        Parameters
+        ----------
+        id : str
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        OptimizationStudioLog
+            Logs response
+
+        Examples
+        --------
+        from Opik import AsyncOpikApi
+        import asyncio
+        client = AsyncOpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        async def main() -> None:
+            await client.optimizations.get_studio_optimization_logs(id='id', )
+        asyncio.run(main())
+        """
+        _response = await self._raw_client.get_studio_optimization_logs(id, request_options=request_options)
         return _response.data

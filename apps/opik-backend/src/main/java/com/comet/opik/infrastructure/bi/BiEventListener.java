@@ -5,12 +5,14 @@ import com.comet.opik.api.events.TracesCreated;
 import com.comet.opik.domain.DemoData;
 import com.comet.opik.domain.ProjectService;
 import com.comet.opik.domain.TraceService;
+import com.comet.opik.domain.workspaces.WorkspacesService;
 import com.comet.opik.infrastructure.OpikConfiguration;
 import com.comet.opik.infrastructure.auth.RequestContext;
 import com.comet.opik.infrastructure.lock.LockService;
 import com.google.common.eventbus.Subscribe;
 import jakarta.inject.Inject;
 import lombok.NonNull;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
@@ -25,43 +27,24 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 
 @EagerSingleton
+@RequiredArgsConstructor(onConstructor_ = @Inject)
 @Slf4j
 public class BiEventListener {
 
     public static final String FIRST_TRACE_REPORT_BI_EVENT = "opik_os_first_trace_created";
 
-    private final UsageReportService usageReportService;
-    private final ProjectService projectService;
-    private final TraceService traceService;
-    private final LockService lockService;
-    private final OpikConfiguration config;
-    private final BiEventService biEventService;
-
-    @Inject
-    public BiEventListener(@NonNull ProjectService projectService,
-            @NonNull UsageReportService usageReportService, @NonNull TraceService traceService,
-            @NonNull OpikConfiguration config, @NonNull LockService lockService,
-            @NonNull BiEventService biEventService) {
-        this.projectService = projectService;
-        this.traceService = traceService;
-        this.config = config;
-        this.usageReportService = usageReportService;
-        this.lockService = lockService;
-        this.biEventService = biEventService;
-    }
+    private final @NonNull UsageReportService usageReportService;
+    private final @NonNull ProjectService projectService;
+    private final @NonNull TraceService traceService;
+    private final @NonNull LockService lockService;
+    private final @NonNull OpikConfiguration config;
+    private final @NonNull BiEventService biEventService;
+    private final @NonNull AnalyticsService analyticsService;
+    private final @NonNull WorkspacesService workspacesService;
 
     @Subscribe
     public void onTracesCreated(TracesCreated event) {
-
-        if (!config.getUsageReport().isEnabled()) {
-            return;
-        }
-
-        checkIfItIsFirstTraceAndReport(event.workspaceId(), event);
-    }
-
-    private void checkIfItIsFirstTraceAndReport(String workspaceId, TracesCreated event) {
-        if (usageReportService.isFirstTraceReport()) {
+        if (!config.getUsageReport().isEnabled() && !config.getAnalytics().isEnabled()) {
             return;
         }
 
@@ -70,6 +53,20 @@ public class BiEventListener {
             return;
         }
 
+        var projectIds = getNonDemoProjectIds(event.workspaceId(), event);
+        if (projectIds.isEmpty()) {
+            log.info("No project ids found for event");
+            return;
+        }
+
+        if (config.getUsageReport().isEnabled()) {
+            checkIfItIsFirstTraceAndReport(event.workspaceId(), event, projectIds);
+        }
+
+        trackFirstTraceViaAnalytics(event.workspaceId(), event);
+    }
+
+    private Set<UUID> getNonDemoProjectIds(String workspaceId, TracesCreated event) {
         Set<UUID> demoProjectIds = projectService.findByNames(workspaceId, DemoData.PROJECTS)
                 .stream()
                 .map(Project::id)
@@ -77,9 +74,11 @@ public class BiEventListener {
 
         Set<UUID> projectIds = new HashSet<>(event.projectIds());
         projectIds.removeAll(demoProjectIds);
+        return projectIds;
+    }
 
-        if (projectIds.isEmpty()) {
-            log.info("No project ids found for event");
+    private void checkIfItIsFirstTraceAndReport(String workspaceId, TracesCreated event, Set<UUID> projectIds) {
+        if (usageReportService.isFirstTraceReport()) {
             return;
         }
 
@@ -120,4 +119,18 @@ public class BiEventListener {
                         "date", Instant.now().toString()));
     }
 
+    private void trackFirstTraceViaAnalytics(String workspaceId, TracesCreated event) {
+        if (!config.getAnalytics().isEnabled()) {
+            return;
+        }
+
+        if (!workspacesService.markFirstTraceReported(workspaceId, event.userName())) {
+            return;
+        }
+
+        analyticsService.trackEvent("first_trace_created", Map.of(
+                "workspace_id", workspaceId,
+                "user_name", event.userName(),
+                "date", Instant.now().toString()), event.userName());
+    }
 }

@@ -9,8 +9,14 @@ permissions:
 env:
   OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
   OPENAI_ORG_ID:  ${{ secrets.OPENAI_ORG_ID }}
+  GCP_CREDENTIALS_JSON: ${{ secrets.GCP_CREDENTIALS_JSON }}
+  GOOGLE_CLOUD_LOCATION: us-east1
+  GOOGLE_CLOUD_PROJECT: opik-sdk-tests
+  GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
   OPIK_ENABLE_LITELLM_MODELS_MONITORING: False
   OPIK_SENTRY_ENABLE: False
+  OPIK_ANALYTICS_ENABLE: False
 on:
   workflow_call:
 
@@ -18,6 +24,7 @@ jobs:
   tests:
     name: Evaluation Metrics Python ${{matrix.python_version}}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: sdks/python
@@ -25,32 +32,35 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        python_version: ["3.9", "3.12"]
+        python_version: ${{ fromJSON(vars.PYTHON_VERSIONS) }}
 
     steps:
       - name: Check out code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Python ${{matrix.python_version}}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: ${{matrix.python_version}}
 
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.0.1
+
       - name: Install opik
-        run: pip install .
+        run: uv pip install --system .
 
       - name: Install test tools
         run: |
           cd ./tests
-          pip install --no-cache-dir --disable-pip-version-check -r test_requirements.txt
+          uv pip install --system -r test_requirements.txt
 
       - name: Install lib
         run: |
           cd ./tests
-          pip install --no-cache-dir --disable-pip-version-check -r library_integration/metrics_with_llm_judge/requirements.txt
-          pip list
+          uv pip install --system -r library_integration/metrics_with_llm_judge/requirements.txt
+          uv pip list --system
 
       - name: Run tests
         run: |
           cd ./tests/library_integration/metrics_with_llm_judge/
-          python -m pytest  -vv .
+          python -m pytest -vv --durations=20 .

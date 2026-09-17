@@ -1,38 +1,78 @@
 import importlib.metadata
-import logging
-
-from opik.evaluation.models.litellm import warning_filters
-
-from opik_optimizer.evolutionary_optimizer.evolutionary_optimizer import (
-    EvolutionaryOptimizer,
-)
+import os
 
 from . import datasets
-from .optimizable_agent import OptimizableAgent
-from .optimization_config.chat_prompt import ChatPrompt
+from .agents.optimizable_agent import OptimizableAgent
+from .api_objects.chat_prompt import ChatPrompt
 from .base_optimizer import BaseOptimizer
-from .few_shot_bayesian_optimizer import FewShotBayesianOptimizer
-from .logging_config import setup_logging
-from .meta_prompt_optimizer import MetaPromptOptimizer
-from .optimization_config.configs import TaskConfig
-from .optimization_result import OptimizationResult
+from .core import llm_calls
+from .core.results import (
+    OptimizationHistoryState,
+    OptimizationRound,
+    OptimizationTrial,
+    build_candidate_entry,
+)
+from .core.state import AlgorithmResult, OptimizationContext
+from .core.exceptions import ScoringFailedError
+from .core.llm_calls import build_llm_call_metadata, requested_multiple_candidates
+from .algorithms import (
+    GepaOptimizer,
+    MetaPromptOptimizer,
+    EvolutionaryOptimizer,
+    HierarchicalReflectiveOptimizer,
+    HRPO,
+    FewShotBayesianOptimizer,
+    ParameterOptimizer,
+)
+from .algorithms.parameter_optimizer import (
+    ParameterSearchSpace,
+    ParameterSpec,
+    ParameterType,
+)
+from .utils.logging import setup_logging
+from .core.results import OptimizationResult
+from .metrics.multi_metric_objective import MultiMetricObjective
+
+# FIXME: Remove once LiteLLM issue is resolved
+# https://github.com/BerriAI/litellm/issues/16813
+os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
 __version__ = importlib.metadata.version("opik_optimizer")
 
-# Using WARNING as a sensible default to avoid flooding users with INFO/DEBUG
-setup_logging(level=logging.WARNING)
-
-warning_filters.add_warning_filters()
+# Use env override when present, otherwise defaults to WARNING
+setup_logging()
 
 __all__ = [
-    "BaseOptimizer",
-    "ChatPrompt",
+    # Algorithms
     "FewShotBayesianOptimizer",
+    "GepaOptimizer",
     "MetaPromptOptimizer",
     "EvolutionaryOptimizer",
+    "HierarchicalReflectiveOptimizer",
+    "HRPO",
+    "ParameterOptimizer",
+    "ParameterSearchSpace",
+    "ParameterSpec",
+    "ParameterType",
+    # API Objects
+    "BaseOptimizer",
+    "ChatPrompt",
+    "AlgorithmResult",
     "OptimizationResult",
+    "OptimizationContext",
+    "OptimizationHistoryState",
+    "OptimizationRound",
+    "OptimizationTrial",
     "OptimizableAgent",
-    "setup_logging",
+    # Core helpers
+    "llm_calls",
+    "build_candidate_entry",
+    "build_llm_call_metadata",
+    "requested_multiple_candidates",
+    # Metrics
+    "MultiMetricObjective",
+    # Datasets
     "datasets",
-    "TaskConfig",
+    # Exceptions
+    "ScoringFailedError",
 ]

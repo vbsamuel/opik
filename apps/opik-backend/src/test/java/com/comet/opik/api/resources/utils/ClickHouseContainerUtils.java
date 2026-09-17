@@ -35,7 +35,7 @@ public class ClickHouseContainerUtils {
 
     public static ClickHouseContainer newClickHouseContainer(boolean reusable) {
         ClickHouseContainer container = new ClickHouseContainer(
-                DockerImageName.parse("clickhouse/clickhouse-server:24.3.6.48-alpine"))
+                DockerImageName.parse("clickhouse/clickhouse-server:26.3.16.16-alpine"))
                 .withReuse(reusable);
 
         CONTAINERS.add(container);
@@ -48,13 +48,12 @@ public class ClickHouseContainerUtils {
     }
 
     public static GenericContainer<?> newZookeeperContainer(boolean reusable, Network network) {
-        var container = new GenericContainer<>("zookeeper:3.9.3")
+        var container = new GenericContainer<>(DockerImageName.parse("zookeeper:3.9.4"))
                 .withExposedPorts(2181)
                 .withNetworkAliases("zookeeper")
                 .withNetwork(network)
-                .withEnv("ALLOW_ANONYMOUS_LOGIN", "yes")
-                .withEnv("ZOO_MY_ID", "1")
-                .withReuse(reusable);
+                .withReuse(reusable)
+                .withEnv("JVMFLAGS", "-Xmx512m");
 
         CONTAINERS.add(container);
 
@@ -88,7 +87,12 @@ public class ClickHouseContainerUtils {
                     .withUsername("default")
                     .withPassword("")
                     .withCopyFileToContainer(MountableFile.forClasspathResource("clickhouse.xml"),
-                            "/etc/clickhouse-server/config.d/clickhouse.xml");
+                            "/etc/clickhouse-server/config.d/clickhouse.xml")
+                    // Provision the production-shape Agent Insights read-only user globally
+                    // (settings profile, user, per-table SELECT grants, row policies; mirrors
+                    // provision_agent_insights_readonly_user.sh). Loaded at server startup.
+                    .withCopyFileToContainer(MountableFile.forClasspathResource("users.xml"),
+                            "/etc/clickhouse-server/users.d/users.xml");
 
         } catch (Exception e) {
             throw new RuntimeException(e);

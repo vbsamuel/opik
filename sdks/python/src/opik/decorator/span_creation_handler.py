@@ -1,20 +1,48 @@
+import logging
 from typing import (
     Optional,
-    Tuple,
+    NamedTuple,
 )
 
-from opik import context_storage, datetime_helpers
+import opik.context_storage as context_storage
+import opik.datetime_helpers as datetime_helpers
 from opik.api_objects import helpers, span, trace
-from opik.types import DistributedTraceHeadersDict
+from opik.types import DistributedTraceHeadersDict, TraceSource
 
 from . import arguments_helpers
+
+LOGGER = logging.getLogger(__name__)
+
+
+class SpanCreationResult(NamedTuple):
+    """
+    Represents the result of a span creation process.
+
+    This class encapsulates the data resulting from the creation of a new
+    span, including trace information and span-specific details.
+
+    Attributes:
+        trace_data: Trace-related data associated
+            with the span if a new trace was created. Can be None if no new trace was created.
+        span_data : Data specific to the created span, containing
+            information such as span identifiers and timestamps.
+        should_process_span_data: A boolean indicating whether created span data should be further processed
+            after it was created (saved, logged, etc.).
+    """
+
+    trace_data: Optional[trace.TraceData]
+    span_data: span.SpanData
+    should_process_span_data: bool
 
 
 def create_span_respecting_context(
     start_span_arguments: arguments_helpers.StartSpanParameters,
     distributed_trace_headers: Optional[DistributedTraceHeadersDict],
     opik_context_storage: Optional[context_storage.OpikContextStorage] = None,
-) -> Tuple[Optional[trace.TraceData], span.SpanData]:
+    should_create_duplicate_root_span: bool = True,
+    preset_trace_id: Optional[str] = None,
+    source: Optional[TraceSource] = None,
+) -> SpanCreationResult:
     """
     Handles different span creation flows.
     """
@@ -22,14 +50,40 @@ def create_span_respecting_context(
     if opik_context_storage is None:
         opik_context_storage = context_storage.get_current_context_instance()
 
+    context_project = context_storage.get_context_project_name()
+    if context_project is not None:
+        if (
+            start_span_arguments.project_name is not None
+            and start_span_arguments.project_name != context_project
+        ):
+            LOGGER.warning(
+                'Nested @track requested project "%s", but the enclosing '
+                'trace already uses "%s". The outer project name will be used.',
+                start_span_arguments.project_name,
+                context_project,
+            )
+        start_span_arguments.project_name = context_project
+
+    # Mirror the project_name pattern: if a local parent span already carries an
+    # environment, that value wins (with a warning on mismatch); if there is no
+    # local context the caller-supplied environment passes through as-is.
+    local_parent = opik_context_storage.top_span_data()
+    if local_parent is not None:
+        start_span_arguments.environment = helpers.resolve_child_span_environment(
+            parent_environment=local_parent.environment,
+            child_environment=start_span_arguments.environment,
+            show_warning=True,
+        )
+
     if distributed_trace_headers:
         span_data = arguments_helpers.create_span_data(
             start_span_arguments=start_span_arguments,
             parent_span_id=distributed_trace_headers["opik_parent_span_id"],
             trace_id=distributed_trace_headers["opik_trace_id"],
+            source=source,
         )
 
-        return None, span_data
+        return SpanCreationResult(None, span_data, should_process_span_data=True)
 
     current_span_data = opik_context_storage.top_span_data()
     current_trace_data = opik_context_storage.get_trace_data()
@@ -53,13 +107,22 @@ def create_span_respecting_context(
 
         start_span_arguments.project_name = project_name
 
+        # A span inherits its parent's environment unconditionally — we warn (just
+        # like project_name) when a nested @track tries to override it.
+        start_span_arguments.environment = helpers.resolve_child_span_environment(
+            parent_environment=current_span_data.environment,
+            child_environment=start_span_arguments.environment,
+            show_warning=show_warning,
+        )
+
         span_data = arguments_helpers.create_span_data(
             start_span_arguments=start_span_arguments,
             parent_span_id=current_span_data.id,
             trace_id=current_span_data.trace_id,
+            source=source if source is not None else current_span_data.source,
         )
 
-        return None, span_data
+        return SpanCreationResult(None, span_data, should_process_span_data=True)
 
     if current_trace_data is not None and current_span_data is None:
         # By default, we expect trace to be created with a span.
@@ -75,31 +138,46 @@ def create_span_respecting_context(
 
         start_span_arguments.project_name = project_name
 
+        start_span_arguments.environment = helpers.resolve_child_span_environment(
+            parent_environment=current_trace_data.environment,
+            child_environment=start_span_arguments.environment,
+            show_warning=current_trace_data.created_by != "evaluation",
+        )
+
         span_data = arguments_helpers.create_span_data(
             start_span_arguments=start_span_arguments,
             parent_span_id=None,
             trace_id=current_trace_data.id,
+            source=source if source is not None else current_trace_data.source,
         )
 
-        return None, span_data
+        return SpanCreationResult(None, span_data, should_process_span_data=True)
 
     if current_span_data is None and current_trace_data is None:
         # Create a trace and root span because it is
         # the first decorated function run in the current context.
         current_trace_data = trace.TraceData(
-            id=helpers.generate_id(),
+            id=preset_trace_id or helpers.generate_id(),
             start_time=datetime_helpers.local_timestamp(),
             name=start_span_arguments.name,
             input=start_span_arguments.input,
             metadata=start_span_arguments.metadata,
             tags=start_span_arguments.tags,
             project_name=start_span_arguments.project_name,
+            thread_id=start_span_arguments.thread_id,
+            source=source if source is not None else "sdk",
+            environment=start_span_arguments.environment,
         )
 
         current_span_data = arguments_helpers.create_span_data(
             start_span_arguments=start_span_arguments,
             parent_span_id=None,
             trace_id=current_trace_data.id,
+            source=source,
         )
 
-    return current_trace_data, current_span_data
+    return SpanCreationResult(
+        current_trace_data,
+        current_span_data,
+        should_process_span_data=should_create_duplicate_root_span,
+    )

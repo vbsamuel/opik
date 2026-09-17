@@ -11,6 +11,7 @@ import lombok.RequiredArgsConstructor;
 
 import java.time.Instant;
 import java.util.Arrays;
+import java.util.SortedSet;
 import java.util.UUID;
 
 @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, include = JsonTypeInfo.As.EXISTING_PROPERTY, property = "action", visible = true)
@@ -23,11 +24,18 @@ import java.util.UUID;
 public sealed interface AutomationRule permits AutomationRuleEvaluator {
 
     UUID getId();
-    UUID getProjectId();
+
+    // Dual-field architecture for backward compatibility
+    UUID getProjectId(); // Legacy - derived from first project
+    String getProjectName(); // Legacy - derived from first project
+    SortedSet<ProjectReference> getProjects(); // Primary field (unique, sorted alphabetically by name)
+
     String getName();
 
     AutomationRuleAction getAction();
     float getSamplingRate();
+    boolean isEnabled();
+    EvalTriggerScope getTriggerScope();
 
     Instant getCreatedAt();
     String getCreatedBy();
@@ -38,7 +46,16 @@ public sealed interface AutomationRule permits AutomationRuleEvaluator {
     @RequiredArgsConstructor(access = AccessLevel.PRIVATE)
     enum AutomationRuleAction {
 
-        EVALUATOR("evaluator");
+        EVALUATOR("evaluator"),
+        /**
+         * Routes entities into an annotation queue when their feedback scores match. Named for what it
+         * does, like {@code evaluator}, rather than for the thing it writes to.
+         *
+         * <p>Storage-only for now: such a rule is created and edited through its queue's own endpoints, so
+         * it is deliberately not a subtype of {@link AutomationRule} and never serialised through the
+         * automation-rules API.
+         */
+        ANNOTATION_QUEUE_ROUTER("annotation_queue_router");
 
         @JsonValue
         private final String action;

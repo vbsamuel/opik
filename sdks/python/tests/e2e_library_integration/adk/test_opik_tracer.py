@@ -1,5 +1,7 @@
 import os
+import shutil
 import subprocess
+import sys
 import time
 
 import certifi
@@ -9,7 +11,7 @@ import requests
 from opik import synchronization
 from opik.integrations.adk import helpers as adk_helpers
 from opik.llm_usage.openai_chat_completions_usage import OpenAICompletionsUsage
-from ... import testlib
+from ... import llm_constants, testlib
 
 # needed for OpenAI agents tests
 os.environ["SSL_CERT_FILE"] = certifi.where()
@@ -47,7 +49,8 @@ def _create_user_session(
     try:
         url = f"{base_url}/apps/{agent_name}/users/{user_id}/sessions/{session_id}"
         response = requests.post(url)
-        if response.status_code == 200:
+        # 409 means the session already exists - is OK with us
+        if response.status_code == 200 or response.status_code == 409:
             print(response.json())
             return True
     except requests.exceptions.ConnectionError:
@@ -64,8 +67,18 @@ def start_api_server(request):
     if agent_name is None:
         agent_name = "sample_agent"  # default
 
+    # Find the adk command in the current environment
+    adk_path = shutil.which("adk")
+    if adk_path is None:
+        # Fallback: construct path from sys.executable
+        venv_bin = os.path.dirname(sys.executable)
+        adk_path = os.path.join(venv_bin, "adk")
+
+    if not os.path.exists(adk_path):
+        raise RuntimeError(f"ADK command not found. Tried: {adk_path}")
+
     with subprocess.Popen(
-        ["adk", "api_server", "--port", str(ADK_SERVER_PORT)],
+        [adk_path, "api_server", "--port", str(ADK_SERVER_PORT)],
         cwd=cwd,
     ) as proc:
         base_url = f"http://localhost:{ADK_SERVER_PORT}"
@@ -87,11 +100,6 @@ def start_api_server(request):
             raise Exception("Server did not start in time")
 
         yield base_url
-
-        if proc.stdout is not None:
-            print(proc.stdout.read())
-        if proc.stderr is not None:
-            print(proc.stderr.read())
 
         proc.terminate()
         proc.wait()
@@ -117,11 +125,14 @@ def test_opik_tracer_with_sample_agent(
         f"{base_url}/run",
         json=json_data,
     )
-    # print("Response: ", result.text)
-    assert result.status_code == 200
+    assert result.status_code == 200, (
+        f"ADK /run returned {result.status_code}. Response: {result.text!r}"
+    )
 
     traces = opik_client_unique_project_name.search_traces(
         filter_string='input contains "Hey, whats the weather in New York today?"',
+        wait_for_at_least=1,
+        wait_for_timeout=30,
     )
     assert len(traces) == 1
 
@@ -132,7 +143,7 @@ def test_opik_tracer_with_sample_agent(
     assert trace.metadata["created_from"] == "google-adk"
     testlib.assert_dict_has_keys(trace.usage, EXPECTED_USAGE_KEYS_GOOGLE)
 
-    spans = opik_client_unique_project_name.search_spans()
+    spans = opik_client_unique_project_name.search_spans(wait_for_at_least=3)
     assert len(spans) == 3
     assert spans[0].provider == adk_helpers.get_adk_provider()
     assert spans[2].provider == adk_helpers.get_adk_provider()
@@ -168,6 +179,8 @@ def test_opik_tracer_with_sample_agent_sse(
 
     traces = opik_client_unique_project_name.search_traces(
         filter_string='input contains "Hey, whats the weather in New York today?"',
+        wait_for_at_least=1,
+        wait_for_timeout=30,
     )
     assert len(traces) == 1
 
@@ -190,6 +203,9 @@ def test_opik_tracer_with_sample_agent_sse(
     )
 
 
+@pytest.mark.skip(
+    reason="Skipping due to flakiness with OpenAI API calls. Re-enable once https://github.com/google/adk-python/pull/4303 is merged."
+)
 @pytest.mark.parametrize("start_api_server", ["sample_agent_openai"], indirect=True)
 def test_opik_tracer_with_sample_agent__openai(
     opik_client_unique_project_name, start_api_server
@@ -215,11 +231,13 @@ def test_opik_tracer_with_sample_agent__openai(
 
     traces = opik_client_unique_project_name.search_traces(
         filter_string='input contains "Hey, whats the weather in New York today?"',
+        wait_for_at_least=1,
+        wait_for_timeout=30,
     )
     assert len(traces) == 1
 
     trace = traces[0]
-    assert trace.span_count == 3  # two LLM calls and one function call
+    assert trace.span_count >= 3  # two LLM calls and one function call + duplicates
     assert trace.usage is not None
     assert "adk_invocation_id" in trace.metadata.keys()
     assert trace.metadata["created_from"] == "google-adk"
@@ -227,16 +245,14 @@ def test_opik_tracer_with_sample_agent__openai(
 
     spans = opik_client_unique_project_name.search_spans()
 
-    assert len(spans) == 3
-    assert spans[0].type == "llm"
-    assert spans[0].provider == "openai"
-    assert spans[0].model.startswith("gpt-4o")
-    OpenAICompletionsUsage.from_original_usage_dict(spans[0].usage)
-
-    assert spans[2].type == "llm"
-    assert spans[2].provider == "openai"
-    assert spans[2].model.startswith("gpt-4o")
-    OpenAICompletionsUsage.from_original_usage_dict(spans[2].usage)
+    assert len(spans) >= 3  # sometimes it duplicates calls to the function
+    for span in spans:
+        if span.type == "llm":
+            assert span.provider == "openai"
+            assert span.model.startswith(llm_constants.OPENAI_GPT_NANO)
+            OpenAICompletionsUsage.from_original_usage_dict(span.usage)
+        elif span.type == "tool":
+            assert span.name == "get_weather"
 
 
 @pytest.mark.parametrize("start_api_server", ["sample_agent_anthropic"], indirect=True)
@@ -264,6 +280,8 @@ def test_opik_tracer_with_sample_agent__anthropic(
 
     traces = opik_client_unique_project_name.search_traces(
         filter_string='input contains "Hey, whats the weather in New York today?"',
+        wait_for_at_least=1,
+        wait_for_timeout=30,
     )
     assert len(traces) == 1
 

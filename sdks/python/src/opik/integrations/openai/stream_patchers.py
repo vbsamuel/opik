@@ -57,29 +57,27 @@ def patch_sync_stream(
                     yield item
             except Exception as exception:
                 LOGGER.debug(
-                    "Exception raised from openai.Stream.",
+                    "Exception raised from openai.Stream: %s",
                     str(exception),
                     exc_info=True,
                 )
                 error_info = error_info_collector.collect(exception)
                 raise exception
             finally:
-                if not hasattr(self, "opik_tracked_instance"):
-                    return
-
-                delattr(self, "opik_tracked_instance")
-                output = (
-                    generations_aggregator(accumulated_items)
-                    if error_info is None
-                    else None
-                )
-                finally_callback(
-                    output=output,
-                    error_info=error_info,
-                    capture_output=True,
-                    generators_span_to_end=self.span_to_end,
-                    generators_trace_to_end=self.trace_to_end,
-                )
+                if hasattr(self, "opik_tracked_instance"):
+                    delattr(self, "opik_tracked_instance")
+                    output = (
+                        generations_aggregator(accumulated_items)
+                        if error_info is None
+                        else None
+                    )
+                    finally_callback(
+                        output=output,
+                        error_info=error_info,
+                        capture_output=True,
+                        generators_span_to_end=self.span_to_end,
+                        generators_trace_to_end=self.trace_to_end,
+                    )
 
         return wrapper
 
@@ -122,29 +120,27 @@ def patch_async_stream(
                     yield item
             except Exception as exception:
                 LOGGER.debug(
-                    "Exception raised from openai.AsyncStream.",
+                    "Exception raised from openai.AsyncStream: %s",
                     str(exception),
                     exc_info=True,
                 )
                 error_info = error_info_collector.collect(exception)
                 raise exception
             finally:
-                if not hasattr(self, "opik_tracked_instance"):
-                    return
-
-                delattr(self, "opik_tracked_instance")
-                output = (
-                    generations_aggregator(accumulated_items)
-                    if error_info is None
-                    else None
-                )
-                finally_callback(
-                    output=output,
-                    error_info=error_info,
-                    capture_output=True,
-                    generators_span_to_end=self.span_to_end,
-                    generators_trace_to_end=self.trace_to_end,
-                )
+                if hasattr(self, "opik_tracked_instance"):
+                    delattr(self, "opik_tracked_instance")
+                    output = (
+                        generations_aggregator(accumulated_items)
+                        if error_info is None
+                        else None
+                    )
+                    finally_callback(
+                        output=output,
+                        error_info=error_info,
+                        capture_output=True,
+                        generators_span_to_end=self.span_to_end,
+                        generators_trace_to_end=self.trace_to_end,
+                    )
 
         return wrapper
 

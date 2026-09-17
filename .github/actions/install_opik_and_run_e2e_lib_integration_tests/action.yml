@@ -26,12 +26,11 @@ runs:
         
         echo "Installing test dependencies"
         cd ./tests
-        uv pip install --no-cache-dir --disable-pip-version-check -r test_requirements.txt
-        uv pip install --no-cache-dir --disable-pip-version-check -r e2e_library_integration/${{ inputs.library_name }}/requirements.txt
+        uv pip install -r test_requirements.txt
+        uv pip install -r e2e_library_integration/${{ inputs.library_name }}/requirements.txt
         uv pip list
         
         echo "Running tests"
-        export OPIK_URL_OVERRIDE=http://localhost:5173/api
         export OPIK_CONSOLE_LOGGING_LEVEL=DEBUG
         cd ./e2e_library_integration/${{ inputs.library_name }}/
         python -m pytest -vv .

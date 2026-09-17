@@ -1,6 +1,7 @@
 import { QueryFunctionContext, useQuery } from "@tanstack/react-query";
 import api, { QueryConfig, THREADS_KEY, TRACES_REST_ENDPOINT } from "@/api/api";
-import { generateSearchByIDFilters, processFilters } from "@/lib/filters";
+import { generateLogsSourceFilter, processFilters } from "@/lib/filters";
+import { LOGS_SOURCE } from "@/types/traces";
 import { Thread } from "@/types/traces";
 import { Filters } from "@/types/filters";
 import { Sorting } from "@/types/sorting";
@@ -14,6 +15,10 @@ type UseThreadListParams = {
   page: number;
   size: number;
   truncate?: boolean;
+  fromTime?: string;
+  toTime?: string;
+  logsSource?: LOGS_SOURCE;
+  annotationQueueId?: string;
 };
 
 export type UseThreadListResponse = {
@@ -32,6 +37,10 @@ const getThreadList = async (
     size,
     page,
     truncate,
+    fromTime,
+    toTime,
+    logsSource,
+    annotationQueueId,
   }: UseThreadListParams,
 ) => {
   const { data } = await api.get<UseThreadListResponse>(
@@ -40,11 +49,20 @@ const getThreadList = async (
       signal,
       params: {
         project_id: projectId,
-        ...processFilters(filters, generateSearchByIDFilters(search)),
+        ...processFilters(
+          filters,
+          logsSource ? generateLogsSourceFilter(logsSource) : undefined,
+        ),
         ...processSorting(sorting),
+        ...(search && { search }),
         size,
         page,
         truncate,
+        ...(fromTime && { from_time: fromTime }),
+        ...(toTime && { to_time: toTime }),
+        ...(annotationQueueId && {
+          annotation_queue_id: annotationQueueId,
+        }),
       },
     },
   );

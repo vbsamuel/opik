@@ -5,6 +5,12 @@ on:
     - cron: '0 12 * * *' # runs every day at noon UTC
   workflow_dispatch:
 
+env:
+  # This workflow installs a real Opik and drives the SDK against it, so without
+  # this, its runs would land in the usage analytics as if they were a user's.
+  OPIK_ANALYTICS_ENABLE: false
+  OPIK_SENTRY_ENABLE: false
+
 jobs:
   test-opiksh:
     name: opik.sh (main README)
@@ -14,19 +20,22 @@ jobs:
       fail-fast: false
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.ref }}
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: 3.12
 
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.0.1
+
       - name: Install Python dependencies
         run: |
-          pip install -r ${{ github.workspace }}/tests_end_to_end/test_requirements.txt
-          pip install opik
+          uv pip install --system -r ${{ github.workspace }}/tests_end_to_end/test_requirements.txt
+          uv pip install --system opik
           playwright install chromium
 
       - name: Install using opik.sh
@@ -56,19 +65,22 @@ jobs:
       fail-fast: false
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.ref }}
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
 
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.0.1
+
       - name: Install Python dependencies
         run: |
-          pip install -r ${{ github.workspace }}/tests_end_to_end/test_requirements.txt
-          pip install opik
+          uv pip install --system -r ${{ github.workspace }}/tests_end_to_end/test_requirements.txt
+          uv pip install --system opik
           playwright install chromium
 
       - name: Install using docker compose up --detach
@@ -76,7 +88,7 @@ jobs:
           OPIK_USAGE_REPORT_ENABLED: false
         run: |
           cd ${{ github.workspace }}/deployment/docker-compose
-          docker compose up --detach
+          docker compose --profile opik up --detach
 
       - name: Check Docker pods are up (Local)
         run: |
@@ -100,7 +112,7 @@ jobs:
         if: always()
         run: |
           cd ${{ github.workspace }}/deployment/docker-compose
-          docker compose down
+          docker compose --profile opik down
 
   test-docker-compose-build:
     name: docker compose up --build (Comet docs)
@@ -110,19 +122,22 @@ jobs:
       fail-fast: false
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.ref }}
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
 
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.0.1
+
       - name: Install Python dependencies
         run: |
-          pip install -r ${{ github.workspace }}/tests_end_to_end/test_requirements.txt
-          pip install opik
+          uv pip install --system -r ${{ github.workspace }}/tests_end_to_end/test_requirements.txt
+          uv pip install --system opik
           playwright install chromium
 
       - name: Install with --build flag
@@ -130,7 +145,7 @@ jobs:
           OPIK_USAGE_REPORT_ENABLED: false
         run: |
           cd ${{ github.workspace }}/deployment/docker-compose
-          docker compose up -d --build
+          docker compose --profile opik up -d --build
           
       - name: Check Docker pods are up (Local)
         run: |
@@ -154,7 +169,7 @@ jobs:
         if: always()
         run: |
           cd ${{ github.workspace }}/deployment/docker-compose
-          docker compose down
+          docker compose --profile opik down
 
   test-docker-compose-with-version:
     name: Set version - docker compose (deployment README)
@@ -164,19 +179,22 @@ jobs:
       fail-fast: false
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.ref }}
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
 
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.0.1
+
       - name: Install Python dependencies
         run: |
-          pip install -r ${{ github.workspace }}/tests_end_to_end/test_requirements.txt
-          pip install opik
+          uv pip install --system -r ${{ github.workspace }}/tests_end_to_end/test_requirements.txt
+          uv pip install --system opik
           playwright install chromium
 
       - name: Install with docker compose with specific version set
@@ -185,7 +203,7 @@ jobs:
         run: |
           cd ${{ github.workspace }}/deployment/docker-compose
           export OPIK_VERSION=1.6.5
-          docker compose -f docker-compose.yaml up -d
+          docker compose -f docker-compose.yaml --profile opik up -d
           
       - name: Check Docker pods are up (Local)
         run: |
@@ -209,7 +227,7 @@ jobs:
         if: always()
         run: |
           cd ${{ github.workspace }}/deployment/docker-compose
-          docker compose down
+          docker compose --profile opik down
 
   test-docker-compose-with-pull:
     name: Docker compose pull + up (Deployment README)
@@ -219,19 +237,22 @@ jobs:
       fail-fast: false
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.ref }}
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
 
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.0.1
+
       - name: Install Python dependencies
         run: |
-          pip install -r ${{ github.workspace }}/tests_end_to_end/test_requirements.txt
-          pip install opik
+          uv pip install --system -r ${{ github.workspace }}/tests_end_to_end/test_requirements.txt
+          uv pip install --system opik
           playwright install chromium
 
       - name: Install with docker compose after pulling latest version
@@ -239,8 +260,8 @@ jobs:
           OPIK_USAGE_REPORT_ENABLED: false
         run: |
           cd ${{ github.workspace }}/deployment/docker-compose
-          docker compose pull
-          docker compose -f docker-compose.yaml up -d
+          docker compose --profile opik pull
+          docker compose -f docker-compose.yaml --profile opik up -d
           
       - name: Check Docker pods are up (Local)
         run: |
@@ -264,4 +285,4 @@ jobs:
         if: always()
         run: |
           cd ${{ github.workspace }}/deployment/docker-compose
-          docker compose down
+          docker compose --profile opik down

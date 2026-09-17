@@ -1,6 +1,7 @@
 package com.comet.opik.api.resources.utils;
 
 import com.comet.opik.OpikApplication;
+import com.comet.opik.api.resources.v1.events.TestRedisSubscriber;
 import com.comet.opik.infrastructure.DatabaseAnalyticsFactory;
 import com.comet.opik.infrastructure.events.EventModule;
 import com.github.tomakehurst.wiremock.junit5.WireMockRuntimeInfo;
@@ -20,6 +21,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import static com.comet.opik.TestConfigUtils.CONFIG_TEST_YML_PATH;
 import static com.comet.opik.infrastructure.RateLimitConfig.LimitConfig;
 
 @UtilityClass
@@ -53,7 +55,8 @@ public class TestDropwizardAppExtensionUtils {
             List<Class<? extends Module>> disableModules,
             List<AbstractModule> modules,
             String minioUrl,
-            boolean isMinIO) {
+            boolean isMinIO,
+            List<Class<?>> disableExtensions) {
     }
 
     public static TestDropwizardAppExtension newTestDropwizardAppExtension(String jdbcUrl,
@@ -121,7 +124,7 @@ public class TestDropwizardAppExtensionUtils {
         if (appContextConfig.runtimeInfo() != null) {
             configs.add("authentication.enabled: true");
             configs.add("authentication.reactService.url: "
-                    + appContextConfig.runtimeInfo().getHttpsBaseUrl());
+                    + appContextConfig.runtimeInfo().getHttpBaseUrl());
 
             if (appContextConfig.authCacheTtlInSeconds() != null) {
                 configs.add(
@@ -138,11 +141,17 @@ public class TestDropwizardAppExtensionUtils {
         }
 
         GuiceyConfigurationHook hook = injector -> {
-            injector.modulesOverride(TestHttpClientUtils.testAuthModule());
-
             Optional.ofNullable(appContextConfig.disableModules)
                     .orElse(List.of())
                     .forEach(injector::disableModules);
+
+            var extensionsToDisable = new ArrayList<>(
+                    Optional.ofNullable(appContextConfig.disableExtensions).orElse(List.of()));
+
+            // Always disable TestRedisSubscriber from auto-discovery (it's a test helper, not a real component)
+            extensionsToDisable.add(TestRedisSubscriber.class);
+
+            extensionsToDisable.forEach(injector::disableExtensions);
 
             if (appContextConfig.mockEventBus() != null) {
                 injector.modulesOverride(new EventModule() {
@@ -233,13 +242,11 @@ public class TestDropwizardAppExtensionUtils {
                     .customConfigs()
                     .stream()
                     .filter(customConfig -> configs.stream().noneMatch(s -> s.contains(customConfig.key())))
-                    .forEach(customConfig -> {
-                        configs.add("%s: %s".formatted(customConfig.key(), customConfig.value()));
-                    });
+                    .forEach(customConfig -> configs.add("%s: %s".formatted(customConfig.key(), customConfig.value())));
         }
 
         return TestDropwizardAppExtension.forApp(OpikApplication.class)
-                .config("src/test/resources/config-test.yml")
+                .config(CONFIG_TEST_YML_PATH)
                 .configOverrides(configs.toArray(new String[0]))
                 .randomPorts()
                 .hooks(hook)

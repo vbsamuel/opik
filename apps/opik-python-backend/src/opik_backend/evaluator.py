@@ -6,6 +6,7 @@ from werkzeug.exceptions import HTTPException
 
 from opik_backend.executor import CodeExecutorBase
 from opik_backend.http_utils import build_error_response
+from opik_backend.score_validation import has_usable_score
 
 # Environment variable to control execution strategy
 EXECUTION_STRATEGY = os.getenv("PYTHON_CODE_EXECUTOR_STRATEGY", "process")
@@ -54,8 +55,11 @@ def execute_evaluator_python():
     if data is None:
         abort(400, "Field 'data' is missing in the request")
 
+    # Extract type information for conversation thread metrics
+    payload_type = payload.get("type")
+
     # Get the executor from app context and run the code
-    response = get_executor().run_scoring(code, data)
+    response = get_executor().run_scoring(code, data, payload_type)
 
     if "error" in response:
         abort(response["code"], response["error"])
@@ -64,5 +68,13 @@ def execute_evaluator_python():
     if len(scores) == 0:
         current_app.logger.info("Missing ScoreResult in code '%s'", code)
         abort(400, "The provided 'code' field didn't return any 'opik.evaluation.metrics.ScoreResult'")
+
+    # A mixed list is passed through on purpose: the usable scores still reach the backend, which drops
+    # the rest and names them on the rule's log stream. Only a wholly unusable response is rejected,
+    # which is the same class of user error as returning no ScoreResult at all, just above.
+    if not has_usable_score(scores):
+        current_app.logger.info("No usable ScoreResult in code '%s'", code)
+        abort(400, "The provided 'code' field didn't return any usable "
+                   "'opik.evaluation.metrics.ScoreResult'")
 
     return jsonify({"scores": scores})

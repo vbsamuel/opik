@@ -1,6 +1,8 @@
 import { DatasetItemWriteSource } from "@/rest_api/api";
 import { JsonNode } from "@/rest_api/api/types/JsonNode";
 import { DatasetItemWrite } from "@/rest_api/api/types/DatasetItemWrite";
+import { EvaluatorItemWrite } from "@/rest_api/api/types/EvaluatorItemWrite";
+import { ExecutionPolicyWrite } from "@/rest_api/api/types/ExecutionPolicyWrite";
 import { generateId } from "@/utils/generateId";
 import stringify from "fast-json-stable-stringify";
 import { initHashApi } from "@/utils/hash";
@@ -20,6 +22,9 @@ export class DatasetItem<T extends DatasetItemData = DatasetItemData> {
   public readonly traceId?: string;
   public readonly spanId?: string;
   public readonly source: DatasetItemWriteSource;
+  public readonly description?: string;
+  public readonly evaluators?: EvaluatorItemWrite[];
+  public readonly executionPolicy?: ExecutionPolicyWrite;
   private readonly data: T;
 
   constructor(
@@ -28,15 +33,25 @@ export class DatasetItem<T extends DatasetItemData = DatasetItemData> {
       traceId?: string;
       spanId?: string;
       source?: DatasetItemWriteSource;
-    } & T
+      description?: string;
+      evaluators?: EvaluatorItemWrite[];
+      executionPolicy?: ExecutionPolicyWrite;
+    } & T,
+    metadataDescription?: string
   ) {
-    const { id, traceId, spanId, source, ...rest } = params;
+    const { id, traceId, spanId, source, description, evaluators, executionPolicy, ...rest } = params;
 
     this.id = id || generateId();
     this.traceId = traceId;
     this.spanId = spanId;
     this.source = source || DatasetItemWriteSource.Sdk;
-    this.data = { ...rest } as T;
+    this.description = description ?? metadataDescription;
+    this.evaluators = evaluators;
+    this.executionPolicy = executionPolicy;
+    this.data = {
+      ...rest,
+      ...(description !== undefined ? { description } : {}),
+    } as T;
   }
 
   /**
@@ -60,7 +75,19 @@ export class DatasetItem<T extends DatasetItemData = DatasetItemData> {
    * @returns A promise resolving to the content hash
    */
   async contentHash(): Promise<string> {
-    const content = this.getContent();
+    const content: Record<string, unknown> = { ...this.getContent() };
+
+    if (this.evaluators && this.evaluators.length > 0) {
+      content["evaluators"] = this.evaluators;
+    }
+
+    if (
+      this.executionPolicy &&
+      Object.keys(this.executionPolicy).length > 0
+    ) {
+      content["executionPolicy"] = this.executionPolicy;
+    }
+
     // Use fast-json-stable-stringify for deterministic JSON
     const json = stringify(content);
 
@@ -83,6 +110,9 @@ export class DatasetItem<T extends DatasetItemData = DatasetItemData> {
       spanId: this.spanId,
       source: this.source,
       data: this.getContent(),
+      ...(this.description && { description: this.description }),
+      ...(this.evaluators && { evaluators: this.evaluators }),
+      ...(this.executionPolicy && { executionPolicy: this.executionPolicy }),
     };
   }
 
@@ -95,12 +125,17 @@ export class DatasetItem<T extends DatasetItemData = DatasetItemData> {
   public static fromApiModel<T extends DatasetItemData = DatasetItemData>(
     model: DatasetItemWrite
   ): DatasetItem<T> {
-    return new DatasetItem<T>({
-      id: model.id,
-      traceId: model.traceId,
-      spanId: model.spanId,
-      source: model.source,
-      ...(model.data as T),
-    });
+    return new DatasetItem<T>(
+      {
+        id: model.id,
+        traceId: model.traceId,
+        spanId: model.spanId,
+        source: model.source,
+        ...(model.evaluators && { evaluators: model.evaluators }),
+        ...(model.executionPolicy && { executionPolicy: model.executionPolicy }),
+        ...(model.data as T),
+      },
+      model.description
+    );
   }
 }

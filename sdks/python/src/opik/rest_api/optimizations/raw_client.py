@@ -10,11 +10,17 @@ from ..core.http_response import AsyncHttpResponse, HttpResponse
 from ..core.jsonable_encoder import jsonable_encoder
 from ..core.pydantic_utilities import parse_obj_as
 from ..core.request_options import RequestOptions
+from ..core.serialization import convert_and_respect_annotation_metadata
 from ..errors.bad_request_error import BadRequestError
 from ..errors.not_found_error import NotFoundError
-from ..types.json_node_write import JsonNodeWrite
+from ..types.error_info import ErrorInfo
+from ..types.error_info_write import ErrorInfoWrite
+from ..types.json_list_string import JsonListString
+from ..types.json_list_string_write import JsonListStringWrite
 from ..types.optimization_page_public import OptimizationPagePublic
 from ..types.optimization_public import OptimizationPublic
+from ..types.optimization_studio_config_write import OptimizationStudioConfigWrite
+from ..types.optimization_studio_log import OptimizationStudioLog
 from ..types.optimization_write_status import OptimizationWriteStatus
 from .types.optimization_update_status import OptimizationUpdateStatus
 
@@ -33,7 +39,10 @@ class RawOptimizationsClient:
         size: typing.Optional[int] = None,
         dataset_id: typing.Optional[str] = None,
         name: typing.Optional[str] = None,
+        dataset_name: typing.Optional[str] = None,
         dataset_deleted: typing.Optional[bool] = None,
+        project_id: typing.Optional[str] = None,
+        filters: typing.Optional[str] = None,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> HttpResponse[OptimizationPagePublic]:
         """
@@ -49,7 +58,13 @@ class RawOptimizationsClient:
 
         name : typing.Optional[str]
 
+        dataset_name : typing.Optional[str]
+
         dataset_deleted : typing.Optional[bool]
+
+        project_id : typing.Optional[str]
+
+        filters : typing.Optional[str]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -67,7 +82,10 @@ class RawOptimizationsClient:
                 "size": size,
                 "dataset_id": dataset_id,
                 "name": name,
+                "dataset_name": dataset_name,
                 "dataset_deleted": dataset_deleted,
+                "project_id": project_id,
+                "filters": filters,
             },
             request_options=request_options,
         )
@@ -105,7 +123,11 @@ class RawOptimizationsClient:
         status: OptimizationWriteStatus,
         id: typing.Optional[str] = OMIT,
         name: typing.Optional[str] = OMIT,
-        metadata: typing.Optional[JsonNodeWrite] = OMIT,
+        project_name: typing.Optional[str] = OMIT,
+        project_id: typing.Optional[str] = OMIT,
+        metadata: typing.Optional[JsonListStringWrite] = OMIT,
+        studio_config: typing.Optional[OptimizationStudioConfigWrite] = OMIT,
+        error_info: typing.Optional[ErrorInfoWrite] = OMIT,
         last_updated_at: typing.Optional[dt.datetime] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> HttpResponse[None]:
@@ -124,7 +146,17 @@ class RawOptimizationsClient:
 
         name : typing.Optional[str]
 
-        metadata : typing.Optional[JsonNodeWrite]
+        project_name : typing.Optional[str]
+            Project name. Creates project if it doesn't exist. Ignored when project_id is provided.
+
+        project_id : typing.Optional[str]
+            Project ID. Takes precedence over project_name when both are provided.
+
+        metadata : typing.Optional[JsonListStringWrite]
+
+        studio_config : typing.Optional[OptimizationStudioConfigWrite]
+
+        error_info : typing.Optional[ErrorInfoWrite]
 
         last_updated_at : typing.Optional[dt.datetime]
 
@@ -142,9 +174,19 @@ class RawOptimizationsClient:
                 "id": id,
                 "name": name,
                 "dataset_name": dataset_name,
+                "project_name": project_name,
+                "project_id": project_id,
                 "objective_name": objective_name,
                 "status": status,
-                "metadata": metadata,
+                "metadata": convert_and_respect_annotation_metadata(
+                    object_=metadata, annotation=JsonListStringWrite, direction="write"
+                ),
+                "studio_config": convert_and_respect_annotation_metadata(
+                    object_=studio_config, annotation=OptimizationStudioConfigWrite, direction="write"
+                ),
+                "error_info": convert_and_respect_annotation_metadata(
+                    object_=error_info, annotation=ErrorInfoWrite, direction="write"
+                ),
                 "last_updated_at": last_updated_at,
             },
             headers={
@@ -169,7 +211,11 @@ class RawOptimizationsClient:
         status: OptimizationWriteStatus,
         id: typing.Optional[str] = OMIT,
         name: typing.Optional[str] = OMIT,
-        metadata: typing.Optional[JsonNodeWrite] = OMIT,
+        project_name: typing.Optional[str] = OMIT,
+        project_id: typing.Optional[str] = OMIT,
+        metadata: typing.Optional[JsonListStringWrite] = OMIT,
+        studio_config: typing.Optional[OptimizationStudioConfigWrite] = OMIT,
+        error_info: typing.Optional[ErrorInfoWrite] = OMIT,
         last_updated_at: typing.Optional[dt.datetime] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> HttpResponse[None]:
@@ -188,7 +234,17 @@ class RawOptimizationsClient:
 
         name : typing.Optional[str]
 
-        metadata : typing.Optional[JsonNodeWrite]
+        project_name : typing.Optional[str]
+            Project name. Creates project if it doesn't exist. Ignored when project_id is provided.
+
+        project_id : typing.Optional[str]
+            Project ID. Takes precedence over project_name when both are provided.
+
+        metadata : typing.Optional[JsonListStringWrite]
+
+        studio_config : typing.Optional[OptimizationStudioConfigWrite]
+
+        error_info : typing.Optional[ErrorInfoWrite]
 
         last_updated_at : typing.Optional[dt.datetime]
 
@@ -206,9 +262,19 @@ class RawOptimizationsClient:
                 "id": id,
                 "name": name,
                 "dataset_name": dataset_name,
+                "project_name": project_name,
+                "project_id": project_id,
                 "objective_name": objective_name,
                 "status": status,
-                "metadata": metadata,
+                "metadata": convert_and_respect_annotation_metadata(
+                    object_=metadata, annotation=JsonListStringWrite, direction="write"
+                ),
+                "studio_config": convert_and_respect_annotation_metadata(
+                    object_=studio_config, annotation=OptimizationStudioConfigWrite, direction="write"
+                ),
+                "error_info": convert_and_respect_annotation_metadata(
+                    object_=error_info, annotation=ErrorInfoWrite, direction="write"
+                ),
                 "last_updated_at": last_updated_at,
             },
             headers={
@@ -317,6 +383,8 @@ class RawOptimizationsClient:
         *,
         name: typing.Optional[str] = OMIT,
         status: typing.Optional[OptimizationUpdateStatus] = OMIT,
+        error_info: typing.Optional[ErrorInfo] = OMIT,
+        metadata: typing.Optional[JsonListString] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> HttpResponse[None]:
         """
@@ -329,6 +397,10 @@ class RawOptimizationsClient:
         name : typing.Optional[str]
 
         status : typing.Optional[OptimizationUpdateStatus]
+
+        error_info : typing.Optional[ErrorInfo]
+
+        metadata : typing.Optional[JsonListString]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -343,6 +415,12 @@ class RawOptimizationsClient:
             json={
                 "name": name,
                 "status": status,
+                "error_info": convert_and_respect_annotation_metadata(
+                    object_=error_info, annotation=ErrorInfo, direction="write"
+                ),
+                "metadata": convert_and_respect_annotation_metadata(
+                    object_=metadata, annotation=JsonListString, direction="write"
+                ),
             },
             headers={
                 "content-type": "application/json",
@@ -353,6 +431,55 @@ class RawOptimizationsClient:
         try:
             if 200 <= _response.status_code < 300:
                 return HttpResponse(response=_response, data=None)
+            _response_json = _response.json()
+        except JSONDecodeError:
+            raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
+        raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
+
+    def get_studio_optimization_logs(
+        self, id: str, *, request_options: typing.Optional[RequestOptions] = None
+    ) -> HttpResponse[OptimizationStudioLog]:
+        """
+        Get presigned S3 URL for downloading optimization logs
+
+        Parameters
+        ----------
+        id : str
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        HttpResponse[OptimizationStudioLog]
+            Logs response
+        """
+        _response = self._client_wrapper.httpx_client.request(
+            f"v1/private/optimizations/studio/{jsonable_encoder(id)}/logs",
+            method="GET",
+            request_options=request_options,
+        )
+        try:
+            if 200 <= _response.status_code < 300:
+                _data = typing.cast(
+                    OptimizationStudioLog,
+                    parse_obj_as(
+                        type_=OptimizationStudioLog,  # type: ignore
+                        object_=_response.json(),
+                    ),
+                )
+                return HttpResponse(response=_response, data=_data)
+            if _response.status_code == 404:
+                raise NotFoundError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        typing.Optional[typing.Any],
+                        parse_obj_as(
+                            type_=typing.Optional[typing.Any],  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
             _response_json = _response.json()
         except JSONDecodeError:
             raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
@@ -370,7 +497,10 @@ class AsyncRawOptimizationsClient:
         size: typing.Optional[int] = None,
         dataset_id: typing.Optional[str] = None,
         name: typing.Optional[str] = None,
+        dataset_name: typing.Optional[str] = None,
         dataset_deleted: typing.Optional[bool] = None,
+        project_id: typing.Optional[str] = None,
+        filters: typing.Optional[str] = None,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> AsyncHttpResponse[OptimizationPagePublic]:
         """
@@ -386,7 +516,13 @@ class AsyncRawOptimizationsClient:
 
         name : typing.Optional[str]
 
+        dataset_name : typing.Optional[str]
+
         dataset_deleted : typing.Optional[bool]
+
+        project_id : typing.Optional[str]
+
+        filters : typing.Optional[str]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -404,7 +540,10 @@ class AsyncRawOptimizationsClient:
                 "size": size,
                 "dataset_id": dataset_id,
                 "name": name,
+                "dataset_name": dataset_name,
                 "dataset_deleted": dataset_deleted,
+                "project_id": project_id,
+                "filters": filters,
             },
             request_options=request_options,
         )
@@ -442,7 +581,11 @@ class AsyncRawOptimizationsClient:
         status: OptimizationWriteStatus,
         id: typing.Optional[str] = OMIT,
         name: typing.Optional[str] = OMIT,
-        metadata: typing.Optional[JsonNodeWrite] = OMIT,
+        project_name: typing.Optional[str] = OMIT,
+        project_id: typing.Optional[str] = OMIT,
+        metadata: typing.Optional[JsonListStringWrite] = OMIT,
+        studio_config: typing.Optional[OptimizationStudioConfigWrite] = OMIT,
+        error_info: typing.Optional[ErrorInfoWrite] = OMIT,
         last_updated_at: typing.Optional[dt.datetime] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> AsyncHttpResponse[None]:
@@ -461,7 +604,17 @@ class AsyncRawOptimizationsClient:
 
         name : typing.Optional[str]
 
-        metadata : typing.Optional[JsonNodeWrite]
+        project_name : typing.Optional[str]
+            Project name. Creates project if it doesn't exist. Ignored when project_id is provided.
+
+        project_id : typing.Optional[str]
+            Project ID. Takes precedence over project_name when both are provided.
+
+        metadata : typing.Optional[JsonListStringWrite]
+
+        studio_config : typing.Optional[OptimizationStudioConfigWrite]
+
+        error_info : typing.Optional[ErrorInfoWrite]
 
         last_updated_at : typing.Optional[dt.datetime]
 
@@ -479,9 +632,19 @@ class AsyncRawOptimizationsClient:
                 "id": id,
                 "name": name,
                 "dataset_name": dataset_name,
+                "project_name": project_name,
+                "project_id": project_id,
                 "objective_name": objective_name,
                 "status": status,
-                "metadata": metadata,
+                "metadata": convert_and_respect_annotation_metadata(
+                    object_=metadata, annotation=JsonListStringWrite, direction="write"
+                ),
+                "studio_config": convert_and_respect_annotation_metadata(
+                    object_=studio_config, annotation=OptimizationStudioConfigWrite, direction="write"
+                ),
+                "error_info": convert_and_respect_annotation_metadata(
+                    object_=error_info, annotation=ErrorInfoWrite, direction="write"
+                ),
                 "last_updated_at": last_updated_at,
             },
             headers={
@@ -506,7 +669,11 @@ class AsyncRawOptimizationsClient:
         status: OptimizationWriteStatus,
         id: typing.Optional[str] = OMIT,
         name: typing.Optional[str] = OMIT,
-        metadata: typing.Optional[JsonNodeWrite] = OMIT,
+        project_name: typing.Optional[str] = OMIT,
+        project_id: typing.Optional[str] = OMIT,
+        metadata: typing.Optional[JsonListStringWrite] = OMIT,
+        studio_config: typing.Optional[OptimizationStudioConfigWrite] = OMIT,
+        error_info: typing.Optional[ErrorInfoWrite] = OMIT,
         last_updated_at: typing.Optional[dt.datetime] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> AsyncHttpResponse[None]:
@@ -525,7 +692,17 @@ class AsyncRawOptimizationsClient:
 
         name : typing.Optional[str]
 
-        metadata : typing.Optional[JsonNodeWrite]
+        project_name : typing.Optional[str]
+            Project name. Creates project if it doesn't exist. Ignored when project_id is provided.
+
+        project_id : typing.Optional[str]
+            Project ID. Takes precedence over project_name when both are provided.
+
+        metadata : typing.Optional[JsonListStringWrite]
+
+        studio_config : typing.Optional[OptimizationStudioConfigWrite]
+
+        error_info : typing.Optional[ErrorInfoWrite]
 
         last_updated_at : typing.Optional[dt.datetime]
 
@@ -543,9 +720,19 @@ class AsyncRawOptimizationsClient:
                 "id": id,
                 "name": name,
                 "dataset_name": dataset_name,
+                "project_name": project_name,
+                "project_id": project_id,
                 "objective_name": objective_name,
                 "status": status,
-                "metadata": metadata,
+                "metadata": convert_and_respect_annotation_metadata(
+                    object_=metadata, annotation=JsonListStringWrite, direction="write"
+                ),
+                "studio_config": convert_and_respect_annotation_metadata(
+                    object_=studio_config, annotation=OptimizationStudioConfigWrite, direction="write"
+                ),
+                "error_info": convert_and_respect_annotation_metadata(
+                    object_=error_info, annotation=ErrorInfoWrite, direction="write"
+                ),
                 "last_updated_at": last_updated_at,
             },
             headers={
@@ -654,6 +841,8 @@ class AsyncRawOptimizationsClient:
         *,
         name: typing.Optional[str] = OMIT,
         status: typing.Optional[OptimizationUpdateStatus] = OMIT,
+        error_info: typing.Optional[ErrorInfo] = OMIT,
+        metadata: typing.Optional[JsonListString] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> AsyncHttpResponse[None]:
         """
@@ -666,6 +855,10 @@ class AsyncRawOptimizationsClient:
         name : typing.Optional[str]
 
         status : typing.Optional[OptimizationUpdateStatus]
+
+        error_info : typing.Optional[ErrorInfo]
+
+        metadata : typing.Optional[JsonListString]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -680,6 +873,12 @@ class AsyncRawOptimizationsClient:
             json={
                 "name": name,
                 "status": status,
+                "error_info": convert_and_respect_annotation_metadata(
+                    object_=error_info, annotation=ErrorInfo, direction="write"
+                ),
+                "metadata": convert_and_respect_annotation_metadata(
+                    object_=metadata, annotation=JsonListString, direction="write"
+                ),
             },
             headers={
                 "content-type": "application/json",
@@ -690,6 +889,55 @@ class AsyncRawOptimizationsClient:
         try:
             if 200 <= _response.status_code < 300:
                 return AsyncHttpResponse(response=_response, data=None)
+            _response_json = _response.json()
+        except JSONDecodeError:
+            raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
+        raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
+
+    async def get_studio_optimization_logs(
+        self, id: str, *, request_options: typing.Optional[RequestOptions] = None
+    ) -> AsyncHttpResponse[OptimizationStudioLog]:
+        """
+        Get presigned S3 URL for downloading optimization logs
+
+        Parameters
+        ----------
+        id : str
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        AsyncHttpResponse[OptimizationStudioLog]
+            Logs response
+        """
+        _response = await self._client_wrapper.httpx_client.request(
+            f"v1/private/optimizations/studio/{jsonable_encoder(id)}/logs",
+            method="GET",
+            request_options=request_options,
+        )
+        try:
+            if 200 <= _response.status_code < 300:
+                _data = typing.cast(
+                    OptimizationStudioLog,
+                    parse_obj_as(
+                        type_=OptimizationStudioLog,  # type: ignore
+                        object_=_response.json(),
+                    ),
+                )
+                return AsyncHttpResponse(response=_response, data=_data)
+            if _response.status_code == 404:
+                raise NotFoundError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        typing.Optional[typing.Any],
+                        parse_obj_as(
+                            type_=typing.Optional[typing.Any],  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
             _response_json = _response.json()
         except JSONDecodeError:
             raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)

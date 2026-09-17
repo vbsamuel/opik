@@ -1,8 +1,41 @@
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 import pydantic
-import json
 import hashlib
+
+from ... import json_helpers
 from .. import constants, helpers
+from . import streaming_writer
+
+
+class EvaluatorItem(pydantic.BaseModel):
+    """
+    An evaluator configuration for a dataset item.
+    """
+
+    model_config = pydantic.ConfigDict(extra="allow", strict=False)
+
+    name: str
+    """The name of the evaluator."""
+
+    type: str
+    """The type of evaluator (e.g., 'llm_judge', 'code_metric')."""
+
+    config: Dict[str, Any]
+    """The evaluator configuration."""
+
+
+class ExecutionPolicyItem(pydantic.BaseModel):
+    """
+    Execution policy for a dataset item.
+    """
+
+    model_config = pydantic.ConfigDict(extra="allow", strict=False)
+
+    runs_per_item: Optional[int] = None
+    """Number of times to run the task for this item."""
+
+    pass_threshold: Optional[int] = None
+    """Minimum number of runs that must pass for the item to pass."""
 
 
 class DatasetItem(pydantic.BaseModel):
@@ -27,7 +60,30 @@ class DatasetItem(pydantic.BaseModel):
     source: str = constants.DATASET_SOURCE_SDK
     """The source of the dataset item. Defaults to DATASET_SOURCE_SDK."""
 
-    def get_content(self, include_id: bool = False) -> Dict[str, Any]:
+    description: Optional[str] = None
+    """Optional description of the dataset item."""
+
+    evaluators: Optional[List[EvaluatorItem]] = None
+    """List of evaluators configured for this dataset item."""
+
+    execution_policy: Optional[ExecutionPolicyItem] = None
+    """Execution policy for this dataset item."""
+
+    def get_content(
+        self,
+        include_id: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Get the data content of the dataset item (extra fields).
+
+        Note: evaluators and execution_policy are not included in data content
+
+        Args:
+            include_id: Whether to include the item ID in the content.
+
+        Returns:
+            Dictionary containing the item's extra fields.
+        """
         content = {**self.model_extra}
         if include_id:
             content["id"] = self.id
@@ -36,11 +92,27 @@ class DatasetItem(pydantic.BaseModel):
 
     def content_hash(self) -> str:
         content = self.get_content()
-        # Convert the dictionary to a JSON string with sorted keys for consistency
-        json_string = json.dumps(content, sort_keys=True)
 
-        # Compute the SHA256 hash of the JSON string
-        hash_object = hashlib.sha256(json_string.encode())
+        if self.description is not None:
+            content["description"] = self.description
 
-        # Return the hexadecimal representation of the hash
+        if self.evaluators is not None:
+            content["evaluators"] = [e.model_dump() for e in self.evaluators]
+
+        if self.execution_policy is not None:
+            content["execution_policy"] = self.execution_policy.model_dump()
+
+        try:
+            encoded = json_helpers.dumps(content, default=None, sort_keys=True)
+        except TypeError:
+            # Only where the line above already raised, never instead of it: every digest
+            # that can be produced without the encoder keeps its exact bytes, because a
+            # digest that moves silently stops matching what is stored and breaks dedup.
+            # The values reaching this branch are the flexible ones the upload accepts --
+            # otherwise they were rejected here before the upload ever saw them.
+            encoded = json_helpers.dumps(
+                content, default=streaming_writer.encode_flexible, sort_keys=True
+            )
+        hash_object = hashlib.sha256(encoded)
+
         return hash_object.hexdigest()

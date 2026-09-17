@@ -1,13 +1,13 @@
 import logging
-from typing import Any, Optional, Type, List, Dict, TYPE_CHECKING
+from typing import Any, cast, Dict, List, Optional, Type, TYPE_CHECKING
 import pydantic
 
-from . import opik_monitoring, message_converters
+from . import opik_monitoring, message_converters, response_parser
 from ...models import base_model
 
 if TYPE_CHECKING:
     import langchain_core.language_models
-    from langchain import schema
+    import langchain_core.messages
 
 LOGGER = logging.getLogger(__name__)
 
@@ -50,24 +50,48 @@ class LangchainChatModel(base_model.OpikBaseModel):
         Returns:
             str: The generated string output.
         """
+        message = self.generate_chat_completion(
+            messages=[{"role": "user", "content": input}],
+            response_format=response_format,
+            **kwargs,
+        )
+        return message["content"]
+
+    def generate_chat_completion(
+        self,
+        messages: List[base_model.ConversationDict],
+        response_format: Optional[Type[pydantic.BaseModel]] = None,
+        **kwargs: Any,
+    ) -> base_model.ConversationDict:
+        """
+        Generate the assistant turn from a list of chat messages.
+
+        Args:
+            messages: A list of ``{"role": ..., "content": ...}`` dictionaries.
+            response_format: Optional Pydantic model specifying the expected output format.
+            kwargs: Additional arguments forwarded to the langchain chat model's invoke call.
+
+        Returns:
+            ``{"role": "assistant", "content": ...}``.
+        """
         if response_format is not None:
             kwargs["response_format"] = response_format
 
-        request = [
-            {
-                "content": input,
-                "role": "user",
-            },
-        ]
-        response = self.generate_provider_response(messages=request, **kwargs)
-        return response.content
+        with base_model.get_provider_response(
+            model_provider=self,
+            messages=cast(List[Dict[str, Any]], list(messages)),
+            **kwargs,
+        ) as response:
+            return response_parser.parse_assistant_message(response)
 
     def generate_provider_response(
         self,
         messages: List[Dict[str, Any]],
         **kwargs: Any,
-    ) -> "schema.AIMessage":
+    ) -> "langchain_core.messages.AIMessage":
         """
+        Do not use this method directly. It is intended to be used within `base_model.get_provider_response()` method.
+
         Generate a provider-specific response using the Langchain model.
 
         Args:
@@ -102,23 +126,38 @@ class LangchainChatModel(base_model.OpikBaseModel):
         Returns:
             str: The generated string output.
         """
+        message = await self.agenerate_chat_completion(
+            messages=[{"role": "user", "content": input}],
+            response_format=response_format,
+            **kwargs,
+        )
+        return message["content"]
+
+    async def agenerate_chat_completion(
+        self,
+        messages: List[base_model.ConversationDict],
+        response_format: Optional[Type[pydantic.BaseModel]] = None,
+        **kwargs: Any,
+    ) -> base_model.ConversationDict:
+        """
+        Async counterpart of :meth:`generate_chat_completion`.
+        """
         if response_format is not None:
             kwargs["response_format"] = response_format
 
-        request = [
-            {
-                "content": input,
-                "role": "user",
-            },
-        ]
-
-        response = await self.agenerate_provider_response(messages=request, **kwargs)
-        return response.content
+        async with base_model.aget_provider_response(
+            model_provider=self,
+            messages=cast(List[Dict[str, Any]], list(messages)),
+            **kwargs,
+        ) as response:
+            return response_parser.parse_assistant_message(response)
 
     async def agenerate_provider_response(
         self, messages: List[Dict[str, Any]], **kwargs: Any
-    ) -> "schema.AIMessage":
+    ) -> "langchain_core.messages.AIMessage":
         """
+        Do not use this method directly. It is intended to be used within `base_model.aget_provider_response()` method.
+
         Generate a provider-specific response using the Langchain model. Async version.
 
         Args:

@@ -6,9 +6,11 @@ import isArray from "lodash/isArray";
 import isNumber from "lodash/isNumber";
 import isObject from "lodash/isObject";
 import isString from "lodash/isString";
-import { TAG_VARIANTS } from "@/components/ui/tag";
+import { TAG_VARIANTS } from "@/ui/tag";
 import { ExperimentItem } from "@/types/datasets";
-import { TRACE_VISIBILITY_MODE } from "@/types/traces";
+import { Thread, TRACE_VISIBILITY_MODE } from "@/types/traces";
+import { safelyParseJSON } from "@/lib/utils";
+import isEmpty from "lodash/isEmpty";
 
 const MESSAGES_DIVIDER = `\n\n  ----------------- \n\n`;
 
@@ -18,7 +20,13 @@ export const generateTagVariant = (label: string) => {
   return TAG_VARIANTS[index % TAG_VARIANTS.length];
 };
 
-export const isObjectSpan = (object: object) => get(object, "trace_id", false);
+export const isObjectSpan = (object: object) =>
+  Boolean(get(object, "trace_id", false));
+
+export const isObjectThread = (object: object): object is Thread =>
+  Boolean(get(object, "thread_model_id", false)) ||
+  Boolean(get(object, "first_message", false)) ||
+  Boolean(get(object, "last_message", false));
 
 export const isNumericFeedbackScoreValid = (
   { min, max }: { min: number; max: number },
@@ -40,6 +48,47 @@ type PrettifyMessageResponse = {
   prettified: boolean;
 };
 
+/**
+ * Extracts the last human/user message content from an array of messages.
+ * Supports both string content and array content (e.g., multimodal messages).
+ * Used by LangGraph and LangChain prettify logic.
+ */
+const extractLastHumanMessageContent = (
+  messages: unknown[],
+): string | undefined => {
+  const humanMessageContents: string[] = [];
+
+  for (const m of messages) {
+    if (isObject(m) && "type" in m && m.type === "human" && "content" in m) {
+      // Content can be a string
+      if (isString(m.content) && m.content !== "") {
+        humanMessageContents.push(m.content);
+      }
+      // Or content can be an array with text content (e.g., multimodal messages)
+      else if (isArray(m.content)) {
+        const lastTextContent = findLast(
+          m.content,
+          (c) =>
+            isObject(c) &&
+            "type" in c &&
+            c.type === "text" &&
+            "text" in c &&
+            isString(c.text) &&
+            c.text !== "",
+        );
+
+        if (lastTextContent && "text" in lastTextContent) {
+          humanMessageContents.push(lastTextContent.text);
+        }
+      }
+    }
+  }
+
+  return humanMessageContents.length > 0
+    ? last(humanMessageContents)
+    : undefined;
+};
+
 const prettifyOpenAIMessageLogic = (
   message: object | string | undefined,
   config: PrettifyMessageConfig,
@@ -50,7 +99,11 @@ const prettifyOpenAIMessageLogic = (
     "messages" in message &&
     isArray(message.messages)
   ) {
-    const lastMessage = last(message.messages);
+    // Filter for user messages only, then get the last one
+    const userMessages = message.messages.filter(
+      (m) => isObject(m) && "role" in m && m.role === "user" && "content" in m,
+    );
+    const lastMessage = last(userMessages);
     if (lastMessage && isObject(lastMessage) && "content" in lastMessage) {
       if (isString(lastMessage.content) && lastMessage.content.length > 0) {
         return lastMessage.content;
@@ -201,20 +254,7 @@ const prettifyLangGraphLogic = (
     "messages" in message &&
     isArray(message.messages)
   ) {
-    // Find the first human message
-    const humanMessages = message.messages.filter(
-      (m) =>
-        isObject(m) &&
-        "type" in m &&
-        m.type === "human" &&
-        "content" in m &&
-        isString(m.content) &&
-        m.content !== "",
-    );
-
-    if (humanMessages.length > 0) {
-      return humanMessages[0].content;
-    }
+    return extractLastHumanMessageContent(message.messages);
   } else if (
     config.type === "output" &&
     isObject(message) &&
@@ -275,20 +315,7 @@ const prettifyLangChainLogic = (
     message.messages.length == 1 &&
     isArray(message.messages[0])
   ) {
-    // Find the first human message
-    const humanMessages = message.messages[0].filter(
-      (m) =>
-        isObject(m) &&
-        "type" in m &&
-        m.type === "human" &&
-        "content" in m &&
-        isString(m.content) &&
-        m.content !== "",
-    );
-
-    if (humanMessages.length > 0) {
-      return humanMessages[0].content;
-    }
+    return extractLastHumanMessageContent(message.messages[0]);
   } else if (
     config.type === "output" &&
     isObject(message) &&
@@ -318,6 +345,161 @@ const prettifyLangChainLogic = (
   }
 };
 
+/**
+ * Prettifies Demo project's blocks-based message format.
+ *
+ * Handles two formats:
+ * - Direct: { blocks: [{ block_type: "text", text: "..." }] }
+ * - Nested: { output: { blocks: [{ block_type: "text", text: "..." }] } }
+ */
+const prettifyDemoProjectLogic = (
+  message: object | string | undefined,
+  config: PrettifyMessageConfig,
+): string | undefined => {
+  const extractTextFromBlocks = (blocks: unknown[]): string | undefined => {
+    const textBlocks = blocks.filter(
+      (block): block is { block_type: string; text: string } =>
+        isObject(block) &&
+        "block_type" in block &&
+        block.block_type === "text" &&
+        "text" in block &&
+        isString(block.text) &&
+        block.text.trim() !== "",
+    );
+
+    return textBlocks.length > 0
+      ? textBlocks.map((block) => block.text).join("\n\n")
+      : undefined;
+  };
+
+  // Handle direct blocks structure: { blocks: [...] }
+  if (isObject(message) && "blocks" in message && isArray(message.blocks)) {
+    return extractTextFromBlocks(message.blocks);
+  }
+
+  // Handle nested blocks structure: { output: { blocks: [...] } }
+  if (
+    config.type === "output" &&
+    isObject(message) &&
+    "output" in message &&
+    isObject(message.output) &&
+    "blocks" in message.output &&
+    isArray(message.output.blocks)
+  ) {
+    return extractTextFromBlocks(message.output.blocks);
+  }
+
+  return undefined;
+};
+
+const UNTRUSTED_METADATA_BLOCK_RE =
+  /^(?:[^\n]*\(untrusted metadata\):\s*```json\s*\n[\s\S]*?```\s*)+/;
+
+// e.g. "[Fri 2026-03-06 11:35 GMT+1] "
+const LEADING_TIMESTAMP_RE = /^\[[\w\s\-:+/]+\]\s*/;
+
+const prettifyOpenClawMessageLogic = (
+  message: object | string | undefined,
+  config: PrettifyMessageConfig,
+): string | undefined => {
+  if (!isObject(message)) return undefined;
+
+  if (
+    config.type === "input" &&
+    "prompt" in message &&
+    isString(message.prompt) &&
+    "systemPrompt" in message &&
+    isString(message.systemPrompt)
+  ) {
+    const stripped = message.prompt
+      .replace(UNTRUSTED_METADATA_BLOCK_RE, "")
+      .replace(LEADING_TIMESTAMP_RE, "")
+      .trim();
+    return stripped.length > 0 ? stripped : message.prompt;
+  }
+
+  if (
+    config.type === "output" &&
+    "output" in message &&
+    isString(message.output) &&
+    "lastAssistant" in message &&
+    isObject(message.lastAssistant)
+  ) {
+    return message.output;
+  }
+
+  return undefined;
+};
+
+const prettifyCustomMessagingLogic = (
+  message: object | string | undefined,
+  config: PrettifyMessageConfig,
+): string | undefined => {
+  if (!isObject(message)) return undefined;
+
+  if (config.type === "input") {
+    if ("prompt" in message && isArray(message.prompt)) {
+      const userMessages = message.prompt.filter(
+        (m) =>
+          isObject(m) &&
+          "role" in m &&
+          m.role === "user" &&
+          "content" in m &&
+          isString(m.content) &&
+          m.content !== "",
+      );
+
+      if (userMessages.length > 0) {
+        return last(userMessages).content;
+      }
+    }
+  } else if (config.type === "output") {
+    if ("candidates" in message && isArray(message.candidates)) {
+      const lastCandidate = last(message.candidates);
+      if (
+        lastCandidate &&
+        isObject(lastCandidate) &&
+        "content" in lastCandidate &&
+        isObject(lastCandidate.content) &&
+        "parts" in lastCandidate.content &&
+        isArray(lastCandidate.content.parts)
+      ) {
+        const lastTextPart = findLast(
+          lastCandidate.content.parts,
+          (part) =>
+            isObject(part) &&
+            "text" in part &&
+            isString(part.text) &&
+            part.text !== "",
+        );
+
+        if (lastTextPart && "text" in lastTextPart) {
+          return lastTextPart.text;
+        }
+      }
+    }
+
+    if ("output" in message && isArray(message.output)) {
+      const lastAiMessage = findLast(
+        message.output,
+        (m) =>
+          isObject(m) &&
+          "type" in m &&
+          m.type === "ai" &&
+          "content" in m &&
+          isString(m.content) &&
+          m.content !== "",
+      );
+
+      if (lastAiMessage && "content" in lastAiMessage) {
+        return lastAiMessage.content;
+      }
+    }
+  }
+
+  return undefined;
+};
+
 const prettifyGenericLogic = (
   message: object | string | undefined,
   config: PrettifyMessageConfig,
@@ -325,14 +507,32 @@ const prettifyGenericLogic = (
   const PREDEFINED_KEYS_MAP = {
     input: [
       "question",
+      "message",
       "messages",
       "user_input",
+      "user_text",
       "query",
       "input_prompt",
       "prompt",
       "sys.query", // Dify
+      "contents",
+      "user_payload",
+      "user_query",
+      "input",
+      "text",
+      // some customer specific formats
+      "query.body.question",
+      "content",
     ],
-    output: ["answer", "output", "response"],
+    output: [
+      "answer",
+      "output",
+      "response",
+      "reply",
+      "final_output",
+      // some customer specific formats
+      "answer.answer",
+    ],
   };
 
   let unwrappedMessage = message;
@@ -363,16 +563,61 @@ const prettifyGenericLogic = (
   }
 };
 
+// Workaround: when the backend truncates large input/output JSON (truncate=true),
+// it cuts the serialized string at ~10k chars, producing invalid JSON that can't
+// be parsed. This extracts known text field values directly from the broken string.
+// Can be removed if we instead truncate individual field values in the backend.
+const KNOWN_TEXT_FIELDS: Record<string, string[]> = {
+  input: ["question", "message", "query", "prompt", "input", "text", "content"],
+  output: ["answer", "output", "response", "reply"],
+};
+
+const extractTextFieldFromTruncatedJson = (
+  jsonString: string,
+  config: PrettifyMessageConfig,
+): string | undefined => {
+  const fields = KNOWN_TEXT_FIELDS[config.type];
+  if (!fields) return undefined;
+
+  for (const field of fields) {
+    const needle = `"${field}":"`;
+    const idx = jsonString.indexOf(needle);
+    if (idx === -1) continue;
+
+    const valueStart = idx + needle.length;
+    let i = valueStart;
+    while (i < jsonString.length) {
+      if (jsonString[i] === "\\") {
+        i += 2;
+      } else if (jsonString[i] === '"') {
+        break;
+      } else {
+        i++;
+      }
+    }
+
+    if (i <= valueStart || i >= jsonString.length) continue;
+
+    try {
+      return JSON.parse(`"${jsonString.slice(valueStart, i)}"`);
+    } catch {
+      continue;
+    }
+  }
+  return undefined;
+};
+
 export const prettifyMessage = (
   message: object | string | undefined,
   config: PrettifyMessageConfig = {
     type: "input",
   },
-) => {
+): PrettifyMessageResponse => {
   if (isString(message)) {
+    const extracted = extractTextFieldFromTruncatedJson(message, config);
     return {
-      message,
-      prettified: false,
+      message: extracted || message,
+      prettified: true,
     } as PrettifyMessageResponse;
   }
   try {
@@ -395,7 +640,28 @@ export const prettifyMessage = (
     }
 
     if (!isString(processedMessage)) {
+      processedMessage = prettifyDemoProjectLogic(message, config);
+    }
+
+    if (!isString(processedMessage)) {
+      processedMessage = prettifyOpenClawMessageLogic(message, config);
+    }
+
+    if (!isString(processedMessage)) {
+      processedMessage = prettifyCustomMessagingLogic(message, config);
+    }
+
+    if (!isString(processedMessage)) {
       processedMessage = prettifyGenericLogic(message, config);
+    }
+
+    // attempt to improve JSON string if the message is serialised JSON string
+    if (isString(processedMessage)) {
+      const json = safelyParseJSON(processedMessage, true);
+
+      if (!isEmpty(json)) {
+        processedMessage = JSON.stringify(json, null, 2);
+      }
     }
 
     return {

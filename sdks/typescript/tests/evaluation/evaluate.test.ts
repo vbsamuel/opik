@@ -3,7 +3,7 @@ import { MockInstance } from "vitest";
 import { evaluate } from "@/evaluation/evaluate";
 import { OpikClient } from "@/client/Client";
 import { Dataset } from "@/dataset/Dataset";
-import { EvaluationTask } from "@/evaluation/types";
+import { EvaluationTask, TASK_ERROR_SCORE_NAME } from "@/evaluation/types";
 import {
   createMockHttpResponsePromise,
   mockAPIFunction,
@@ -30,6 +30,9 @@ describe("evaluate function", () => {
   let scoreBatchOfTracesSpy: MockInstance<
     typeof opikClient.api.traces.scoreBatchOfTraces
   >;
+  let createExperimentItemsSpy: MockInstance<
+    typeof opikClient.api.experiments.createExperimentItems
+  >;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -44,7 +47,7 @@ describe("evaluate function", () => {
         name: "test-dataset",
         description: "Test dataset for evaluation",
       },
-      opikClient
+      opikClient,
     );
 
     createTracesSpy = vi
@@ -64,7 +67,7 @@ describe("evaluate function", () => {
       .mockImplementation(() =>
         createMockHttpResponsePromise({
           name: testDataset.name,
-        })
+        }),
       );
 
     createExperimentSpy = vi
@@ -78,9 +81,24 @@ describe("evaluate function", () => {
             id: "item-1",
             data: { input: "test input 1", expected: "test output 1" },
             source: "sdk",
-          }) + "\n"
-        )
+          }) + "\n",
+        ),
       );
+
+    // Mock listDatasetVersions for getVersionInfo() calls
+    vi.spyOn(opikClient.api.datasets, "listDatasetVersions").mockImplementation(
+      () =>
+        createMockHttpResponsePromise({
+          content: [{ id: "version-1", versionName: "v1" }],
+          page: 1,
+          size: 1,
+          total: 1,
+        }),
+    );
+
+    createExperimentItemsSpy = vi
+      .spyOn(opikClient.api.experiments, "createExperimentItems")
+      .mockImplementation(mockAPIFunction);
 
     vi.useFakeTimers();
   });
@@ -105,7 +123,7 @@ describe("evaluate function", () => {
       expect.objectContaining({
         name: "test-experiment",
         datasetName: "test-dataset",
-      })
+      }),
     );
 
     expect(streamDatasetItemsSpy).toHaveBeenCalled();
@@ -133,7 +151,7 @@ describe("evaluate function", () => {
             startTime: expect.any(Date),
           }),
         ]),
-      })
+      }),
     );
 
     expect(createSpansSpy).toHaveBeenCalled();
@@ -146,12 +164,14 @@ describe("evaluate function", () => {
             name: "llm_task",
           }),
         ]),
-      })
+      }),
     );
 
     expect(result).toEqual({
       experimentId: expect.any(String),
       experimentName: "test-experiment",
+      resultUrl: expect.any(String),
+      errors: [],
       testResults: [
         expect.objectContaining({
           testCase: expect.objectContaining({
@@ -168,6 +188,102 @@ describe("evaluate function", () => {
         }),
       ],
     });
+  });
+
+  test("should return failed test results when task execution fails", async () => {
+    const mockTask: EvaluationTask = async () => {
+      throw new Error("task failed");
+    };
+
+    const result = await evaluate({
+      dataset: testDataset,
+      task: mockTask,
+      experimentName: "test-experiment",
+      client: opikClient,
+    });
+
+    expect(result.errors).toEqual([
+      expect.objectContaining({
+        datasetItemId: "item-1",
+        runIndex: 0,
+        message: "task failed",
+        error: expect.any(Error),
+      }),
+    ]);
+    expect(result.testResults).toHaveLength(1);
+    expect(result.testResults[0]).toEqual(
+      expect.objectContaining({
+        testCase: expect.objectContaining({
+          datasetItemId: "item-1",
+          traceId: expect.any(String),
+          taskOutput: {},
+          scoringInputs: expect.objectContaining({
+            input: "test input 1",
+            expected: "test output 1",
+          }),
+        }),
+        scoreResults: [
+          expect.objectContaining({
+            name: TASK_ERROR_SCORE_NAME,
+            value: 0,
+            reason: "task failed",
+            scoringFailed: true,
+          }),
+        ],
+      }),
+    );
+
+    const createTracesCall = createTracesSpy.mock.calls[0][0];
+    const capturedTraceId = createTracesCall.traces[0].id;
+    expect(capturedTraceId).toBeDefined();
+    expect(result.testResults[0].testCase.traceId).toBe(capturedTraceId);
+    expect(createTracesCall).toEqual(
+      expect.objectContaining({
+        traces: expect.arrayContaining([
+          expect.objectContaining({
+            errorInfo: expect.objectContaining({
+              message: "task failed",
+              exceptionType: "Error",
+            }),
+          }),
+        ]),
+      }),
+    );
+
+    // Failed run must still be attached to the experiment so it appears in the UI.
+    expect(createExperimentItemsSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        experimentItems: expect.arrayContaining([
+          expect.objectContaining({
+            datasetItemId: "item-1",
+            traceId: capturedTraceId,
+          }),
+        ]),
+      }),
+    );
+  });
+
+  test("surfaces original task error when experiment insert also fails", async () => {
+    const mockTask: EvaluationTask = async () => {
+      throw new Error("task failed");
+    };
+
+    createExperimentItemsSpy.mockRejectedValueOnce(new Error("insert failed"));
+
+    const result = await evaluate({
+      dataset: testDataset,
+      task: mockTask,
+      experimentName: "test-experiment",
+      client: opikClient,
+    });
+
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].message).toBe("task failed");
+    expect(result.errors[0].error?.message).toBe("task failed");
+    expect(result.testResults).toHaveLength(1);
+    expect(result.testResults[0].scoreResults[0].name).toBe(
+      TASK_ERROR_SCORE_NAME,
+    );
   });
 
   test("should execute evaluation with scoring metrics", async () => {
@@ -195,7 +311,7 @@ describe("evaluate function", () => {
             projectName: "opik-sdk-typescript-test",
           }),
         ]),
-      })
+      }),
     );
 
     expect(result.testResults[0].scoreResults).toEqual(
@@ -205,7 +321,7 @@ describe("evaluate function", () => {
           value: 0,
           reason: expect.stringContaining("Exact match: No match"),
         }),
-      ])
+      ]),
     );
 
     expect(createSpansSpy).toHaveBeenCalled();
@@ -223,7 +339,7 @@ describe("evaluate function", () => {
             name: "metrics_calculation",
           }),
         ]),
-      })
+      }),
     );
   });
 
@@ -238,7 +354,7 @@ describe("evaluate function", () => {
         task: mockTask,
         experimentName: "test-experiment",
         client: opikClient,
-      })
+      }),
     ).rejects.toThrow("Dataset is required for evaluation");
     await expect(
       // @ts-expect-error - Intentionally missing required property
@@ -246,7 +362,7 @@ describe("evaluate function", () => {
         task: mockTask,
         experimentName: "test-experiment",
         client: opikClient,
-      })
+      }),
     ).rejects.toThrow("Dataset is required for evaluation");
 
     expect(createExperimentSpy).not.toHaveBeenCalled();
@@ -259,9 +375,77 @@ describe("evaluate function", () => {
         dataset: testDataset,
         experimentName: "test-experiment",
         client: opikClient,
-      })
+      }),
     ).rejects.toThrow("Task function is required for evaluation");
 
     expect(createExperimentSpy).not.toHaveBeenCalled();
+  });
+
+  test("should include blueprint metadata when blueprintId is provided", async () => {
+    const getBlueprintSpy = vi
+      .spyOn(opikClient.api.agentConfigs, "getBlueprintById")
+      .mockImplementation(() =>
+        createMockHttpResponsePromise({
+          id: "bp-123",
+          name: "v9",
+          type: "blueprint",
+          values: [],
+        }),
+      );
+
+    const mockTask: EvaluationTask = async () => {
+      return { output: "result" };
+    };
+
+    await evaluate({
+      dataset: testDataset,
+      task: mockTask,
+      experimentName: "blueprint-test",
+      client: opikClient,
+      blueprintId: "bp-123",
+    });
+
+    expect(getBlueprintSpy).toHaveBeenCalledWith("bp-123");
+    expect(createExperimentSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          agent_configuration: {
+            _blueprint_id: "bp-123",
+            blueprint_version: "v9",
+          },
+        }),
+      }),
+    );
+  });
+
+  test("should store blueprint_id even when fetch fails", async () => {
+    vi.spyOn(
+      opikClient.api.agentConfigs,
+      "getBlueprintById",
+    ).mockImplementation(() => {
+      throw new Error("not found");
+    });
+
+    const mockTask: EvaluationTask = async () => {
+      return { output: "result" };
+    };
+
+    await evaluate({
+      dataset: testDataset,
+      task: mockTask,
+      experimentName: "blueprint-fail-test",
+      client: opikClient,
+      blueprintId: "bp-456",
+    });
+
+    expect(createExperimentSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          agent_configuration: {
+            _blueprint_id: "bp-456",
+          },
+        }),
+      }),
+    );
   });
 });

@@ -7,7 +7,7 @@ import pydantic
 from ..core.pydantic_utilities import IS_PYDANTIC_V2, UniversalBaseModel
 from .error_info_write import ErrorInfoWrite
 from .json_list_string_write import JsonListStringWrite
-from .json_node_write import JsonNodeWrite
+from .trace_write_source import TraceWriteSource
 
 
 class TraceWrite(UniversalBaseModel):
@@ -22,11 +22,18 @@ class TraceWrite(UniversalBaseModel):
     end_time: typing.Optional[dt.datetime] = None
     input: typing.Optional[JsonListStringWrite] = None
     output: typing.Optional[JsonListStringWrite] = None
-    metadata: typing.Optional[JsonNodeWrite] = None
+    metadata: typing.Optional[JsonListStringWrite] = None
     tags: typing.Optional[typing.List[str]] = None
     error_info: typing.Optional[ErrorInfoWrite] = None
     last_updated_at: typing.Optional[dt.datetime] = None
+    ttft: typing.Optional[float] = pydantic.Field(default=None)
+    """
+    Time to first token in milliseconds
+    """
+
     thread_id: typing.Optional[str] = None
+    source: typing.Optional[TraceWriteSource] = None
+    environment: typing.Optional[str] = None
 
     if IS_PYDANTIC_V2:
         model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(extra="allow", frozen=True)  # type: ignore # Pydantic v2

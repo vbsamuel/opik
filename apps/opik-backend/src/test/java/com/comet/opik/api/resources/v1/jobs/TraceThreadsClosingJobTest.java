@@ -1,9 +1,9 @@
 package com.comet.opik.api.resources.v1.jobs;
 
-import com.comet.opik.api.Project;
 import com.comet.opik.api.Trace;
 import com.comet.opik.api.TraceThread;
 import com.comet.opik.api.TraceThreadStatus;
+import com.comet.opik.api.WorkspaceConfiguration;
 import com.comet.opik.api.filter.Operator;
 import com.comet.opik.api.filter.TraceThreadField;
 import com.comet.opik.api.filter.TraceThreadFilter;
@@ -14,17 +14,24 @@ import com.comet.opik.api.resources.utils.DurationUtils;
 import com.comet.opik.api.resources.utils.MigrationUtils;
 import com.comet.opik.api.resources.utils.MySQLContainerUtils;
 import com.comet.opik.api.resources.utils.RedisContainerUtils;
+import com.comet.opik.api.resources.utils.TestDropwizardAppExtensionUtils.CustomConfig;
 import com.comet.opik.api.resources.utils.TestUtils;
 import com.comet.opik.api.resources.utils.WireMockUtils;
 import com.comet.opik.api.resources.utils.resources.ProjectResourceClient;
 import com.comet.opik.api.resources.utils.resources.TraceResourceClient;
+import com.comet.opik.api.resources.utils.resources.WorkspaceResourceClient;
 import com.comet.opik.api.resources.utils.traces.TraceAssertions;
-import com.comet.opik.domain.threads.TraceThreadService;
 import com.comet.opik.extensions.DropwizardAppExtensionProvider;
 import com.comet.opik.extensions.RegisterApp;
+import com.comet.opik.infrastructure.TraceThreadConfig;
 import com.comet.opik.podam.PodamFactoryUtils;
+import com.fasterxml.uuid.Generators;
+import com.fasterxml.uuid.impl.TimeBasedEpochGenerator;
+import com.google.inject.Injector;
+import com.google.inject.Key;
 import com.redis.testcontainers.RedisContainer;
 import org.apache.commons.lang3.RandomStringUtils;
+import org.awaitility.Awaitility;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -33,10 +40,9 @@ import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.testcontainers.clickhouse.ClickHouseContainer;
 import org.testcontainers.containers.GenericContainer;
-import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.lifecycle.Startables;
-import org.testcontainers.shaded.org.awaitility.Awaitility;
-import reactor.core.publisher.Mono;
+import org.testcontainers.mysql.MySQLContainer;
+import ru.vyarus.dropwizard.guice.module.yaml.bind.Config;
 import ru.vyarus.dropwizard.guice.test.ClientSupport;
 import ru.vyarus.dropwizard.guice.test.jupiter.ext.TestDropwizardAppExtension;
 import uk.co.jemos.podam.api.PodamFactory;
@@ -66,7 +72,7 @@ class TraceThreadsClosingJobTest {
     private static final String TEST_WORKSPACE = UUID.randomUUID().toString();
 
     private final RedisContainer REDIS = RedisContainerUtils.newRedisContainer();
-    private final MySQLContainer<?> MYSQL_CONTAINER = MySQLContainerUtils.newMySQLContainer();
+    private final MySQLContainer MYSQL_CONTAINER = MySQLContainerUtils.newMySQLContainer();
     private final GenericContainer<?> ZOOKEEPER_CONTAINER = ClickHouseContainerUtils.newZookeeperContainer();
     private final ClickHouseContainer CLICKHOUSE_CONTAINER = ClickHouseContainerUtils
             .newClickHouseContainer(ZOOKEEPER_CONTAINER);
@@ -93,22 +99,38 @@ class TraceThreadsClosingJobTest {
                         .databaseAnalyticsFactory(databaseAnalyticsFactory)
                         .runtimeInfo(wireMock.runtimeInfo())
                         .redisUrl(REDIS.getRedisURI())
+                        .customConfigs(List.of(
+                                new CustomConfig("traceThreadConfig.enabled", "true")))
                         .build());
     }
 
     private final PodamFactory podamFactory = PodamFactoryUtils.newPodamFactory();
 
+    // Buffer added on top of a configured timeout when waiting for a thread to become inactive,
+    // so waits track the actual configuration instead of a literal coupled to config-test.yml.
+    private static final Duration CLOSURE_WAIT_BUFFER = Duration.ofMillis(500);
+
+    // Aggressive max wait so tests fail fast; the closing job runs every 1.5s (config-test.yml).
+    private static final int AWAIT_TIMEOUT_SECONDS = 10;
+
+    // Thread IDs are UUID v7 in production; mirror that here for realism.
+    private static final TimeBasedEpochGenerator UUID_V7_GENERATOR = Generators.timeBasedEpochGenerator();
+
     private String baseURI;
     private ClientSupport client;
     private ProjectResourceClient projectResourceClient;
     private TraceResourceClient traceResourceClient;
+    private WorkspaceResourceClient workspaceResourceClient;
+    private Duration defaultThreadTimeout;
 
     @BeforeAll
 
-    void setUpAll(ClientSupport client) {
+    void setUpAll(ClientSupport client, Injector injector) {
 
         this.baseURI = TestUtils.getBaseUrl(client);
         this.client = client;
+        this.defaultThreadTimeout = injector.getInstance(Key.get(TraceThreadConfig.class, Config.class))
+                .getTimeoutToMarkThreadAsInactive().toJavaDuration();
 
         ClientSupportUtils.config(client);
 
@@ -116,6 +138,7 @@ class TraceThreadsClosingJobTest {
 
         this.projectResourceClient = new ProjectResourceClient(this.client, baseURI, podamFactory);
         this.traceResourceClient = new TraceResourceClient(this.client, baseURI);
+        this.workspaceResourceClient = new WorkspaceResourceClient(this.client, baseURI, podamFactory);
     }
 
     private void mockTargetWorkspace(String apiKey, String workspaceName, String workspaceId) {
@@ -140,7 +163,7 @@ class TraceThreadsClosingJobTest {
             String projectName = RandomStringUtils.secure().nextAlphanumeric(10);
 
             var projectId = projectResourceClient.createProject(projectName, apiKey, workspaceName);
-            var threadId = UUID.randomUUID().toString();
+            var threadId = UUID_V7_GENERATOR.generate().toString();
 
             // Create multiple trace within same thread
             List<Trace> traces = createListOfTraces(projectName, threadId);
@@ -155,7 +178,8 @@ class TraceThreadsClosingJobTest {
             var expectedTraceThreadModel = createTraceThreadModel(threadId, projectId, expectedCreatedAt,
                     expectedLastUpdatedAt, DEFAULT_USER, TraceThreadStatus.INACTIVE, traces);
 
-            Mono.delay(Duration.ofSeconds(1)).block();
+            // Wait for the configured default timeout to elapse so the thread is eligible for closure
+            TestUtils.waitForMillis(defaultThreadTimeout.plus(CLOSURE_WAIT_BUFFER).toMillis());
 
             var expectedLastUpdateAt = Instant.now();
             TraceThread expectedUpdatedTraceThreadModel = expectedTraceThreadModel.toBuilder()
@@ -163,15 +187,16 @@ class TraceThreadsClosingJobTest {
                     .build();
 
             // Then
-            Awaitility.await().pollInterval(500, TimeUnit.MILLISECONDS).untilAsserted(() -> {
-                verifyClosedThreads(projectId, projectName, apiKey, workspaceName,
-                        List.of(expectedUpdatedTraceThreadModel));
-            });
+            Awaitility.await().atMost(AWAIT_TIMEOUT_SECONDS, TimeUnit.SECONDS).pollInterval(500, TimeUnit.MILLISECONDS)
+                    .untilAsserted(() -> {
+                        verifyClosedThreads(projectId, projectName, apiKey, workspaceName,
+                                List.of(expectedUpdatedTraceThreadModel));
+                    });
         }
 
         @Test
         @DisplayName("Should reopen trace threads if new traces are added after closing")
-        void shouldReopenTraceThreadsIfNewTracesAreAdded(TraceThreadService traceThreadService) {
+        void shouldReopenTraceThreadsIfNewTracesAreAdded() {
             // Given
             var workspaceName = RandomStringUtils.secure().nextAlphanumeric(10);
             var workspaceId = UUID.randomUUID().toString();
@@ -182,8 +207,8 @@ class TraceThreadsClosingJobTest {
             String projectName = RandomStringUtils.secure().nextAlphanumeric(10);
             var projectId = projectResourceClient.createProject(projectName, apiKey, workspaceName);
 
-            var threadId1 = UUID.randomUUID().toString();
-            var threadId2 = UUID.randomUUID().toString();
+            var threadId1 = UUID_V7_GENERATOR.generate().toString();
+            var threadId2 = UUID_V7_GENERATOR.generate().toString();
 
             // Create initial traces
             List<Trace> tracesFromThread1 = createListOfTraces(projectName, threadId1);
@@ -205,9 +230,11 @@ class TraceThreadsClosingJobTest {
                             TraceThreadStatus.ACTIVE, tracesFromThread1));
 
             // Then: Check if the threads are opened
-            Awaitility.await().pollInterval(100, TimeUnit.MILLISECONDS).untilAsserted(() -> {
-                verifyOpenThreads(projectId, projectName, apiKey, workspaceName, expectedOpenedTraceThreadModels);
-            });
+            Awaitility.await().atMost(AWAIT_TIMEOUT_SECONDS, TimeUnit.SECONDS).pollInterval(100, TimeUnit.MILLISECONDS)
+                    .untilAsserted(() -> {
+                        verifyOpenThreads(projectId, projectName, apiKey, workspaceName,
+                                expectedOpenedTraceThreadModels);
+                    });
 
             Instant expectedLastUpdatedAt = Instant.now();
 
@@ -218,9 +245,11 @@ class TraceThreadsClosingJobTest {
                             DEFAULT_USER, TraceThreadStatus.INACTIVE, tracesFromThread2));
 
             // Then: Check if the threads are closed
-            Awaitility.await().pollInterval(500, TimeUnit.MILLISECONDS).untilAsserted(() -> {
-                verifyClosedThreads(projectId, projectName, apiKey, workspaceName, expectedClosedTraceThreadModels);
-            });
+            Awaitility.await().atMost(AWAIT_TIMEOUT_SECONDS, TimeUnit.SECONDS).pollInterval(500, TimeUnit.MILLISECONDS)
+                    .untilAsserted(() -> {
+                        verifyClosedThreads(projectId, projectName, apiKey, workspaceName,
+                                expectedClosedTraceThreadModels);
+                    });
 
             // Then: Check if the threads are reopened after adding new traces
             List<Trace> newTracesThread1 = createListOfTraces(projectName, threadId1);
@@ -245,9 +274,11 @@ class TraceThreadsClosingJobTest {
                             USER, TraceThreadStatus.ACTIVE, tracesThread1));
 
             // Then: Check if the thread is reopened
-            Awaitility.await().pollInterval(200, TimeUnit.MILLISECONDS).untilAsserted(() -> {
-                verifyOpenThreads(projectId, projectName, apiKey, workspaceName, expectedReopenedTraceThreadModels);
-            });
+            Awaitility.await().atMost(AWAIT_TIMEOUT_SECONDS, TimeUnit.SECONDS).pollInterval(200, TimeUnit.MILLISECONDS)
+                    .untilAsserted(() -> {
+                        verifyOpenThreads(projectId, projectName, apiKey, workspaceName,
+                                expectedReopenedTraceThreadModels);
+                    });
 
             expectedLastUpdatedAt = Instant.now();
 
@@ -258,13 +289,15 @@ class TraceThreadsClosingJobTest {
                             DEFAULT_USER, TraceThreadStatus.INACTIVE, tracesThread2));
 
             // Finally: Check if the threads are closed again after the job runs
-            Awaitility.await().pollInterval(500, TimeUnit.MILLISECONDS).untilAsserted(() -> {
-                verifyClosedThreads(projectId, projectName, apiKey, workspaceName, expectedClosedTraceThreadModels2);
-            });
+            Awaitility.await().atMost(AWAIT_TIMEOUT_SECONDS, TimeUnit.SECONDS).pollInterval(500, TimeUnit.MILLISECONDS)
+                    .untilAsserted(() -> {
+                        verifyClosedThreads(projectId, projectName, apiKey, workspaceName,
+                                expectedClosedTraceThreadModels2);
+                    });
         }
 
         @Test
-        @DisplayName("Should close trace threads for a project with custom timeout configuration")
+        @DisplayName("Should close trace threads for project with custom workspace timeout")
         void shouldCloseTraceThreadsForProjectWithCustomTimeout() {
             // Given
             var workspaceName = RandomStringUtils.secure().nextAlphanumeric(10);
@@ -274,49 +307,108 @@ class TraceThreadsClosingJobTest {
             mockTargetWorkspace(apiKey, workspaceName, workspaceId);
 
             String projectName = RandomStringUtils.secure().nextAlphanumeric(10);
-
-            // Create project with custom timeout configuration (2 seconds for faster test)
             var projectId = projectResourceClient.createProject(projectName, apiKey, workspaceName);
+            var threadId = UUID_V7_GENERATOR.generate().toString();
 
-            var customTimeout = Duration.ofSeconds(2);
-            var configuration = Project.Configuration.builder()
+            // Set a custom workspace timeout of 2 seconds (shorter than the job polling, but longer than default 1s in config-test.yml)
+            Duration customTimeout = Duration.ofSeconds(2);
+            WorkspaceConfiguration configuration = WorkspaceConfiguration.builder()
                     .timeoutToMarkThreadAsInactive(customTimeout)
                     .build();
 
-            // Set custom timeout configuration for the project
-            projectResourceClient.updateConfigurations(configuration, projectId, apiKey, workspaceName);
-
-            var threadId = UUID.randomUUID().toString();
+            workspaceResourceClient.upsertWorkspaceConfiguration(configuration, apiKey, workspaceName);
 
             // Create multiple traces within same thread
             List<Trace> traces = createListOfTraces(projectName, threadId);
-
             var expectedCreatedAt = Instant.now();
-            Instant expectedLastUpdatedAt = getExpectedLastUpdatedAt(traces);
-
-            TraceThread expectedTraceThreadModel = createTraceThreadModel(threadId, projectId, expectedCreatedAt,
-                    expectedLastUpdatedAt, USER, TraceThreadStatus.ACTIVE, traces);
 
             // When: Creating trace threads
             traceResourceClient.batchCreateTraces(traces, apiKey, workspaceName);
 
+            Instant expectedLastUpdatedAt = getExpectedLastUpdatedAt(traces);
+
+            var expectedActiveTraceThreadModel = createTraceThreadModel(threadId, projectId, expectedCreatedAt,
+                    expectedLastUpdatedAt, DEFAULT_USER, TraceThreadStatus.ACTIVE, traces);
+
+            // Wait less than the custom timeout so the thread is still active
+            TestUtils.waitForMillis(customTimeout.dividedBy(2).toMillis());
+
             // Then: Verify that threads are created as ACTIVE first
-            Awaitility.await().pollInterval(100, TimeUnit.MILLISECONDS).untilAsserted(() -> {
-                verifyOpenThreads(projectId, projectName, apiKey, workspaceName, List.of(expectedTraceThreadModel));
-            });
+            Awaitility.await().atMost(AWAIT_TIMEOUT_SECONDS, TimeUnit.SECONDS).pollInterval(100, TimeUnit.MILLISECONDS)
+                    .untilAsserted(() -> {
+                        verifyOpenThreads(projectId, projectName, apiKey, workspaceName,
+                                List.of(expectedActiveTraceThreadModel));
+                    });
 
-            // Wait for custom timeout to take effect
-            Mono.delay(Duration.ofSeconds(3)).block();
-            Instant expectedLastUpdateAt2 = Instant.now();
+            // Wait the rest of the custom timeout (plus a buffer) so the thread becomes eligible for closure
+            TestUtils.waitForMillis(customTimeout.plus(CLOSURE_WAIT_BUFFER).toMillis());
 
-            TraceThread expectedTraceThreadModel2 = createTraceThreadModel(
-                    threadId, projectId, expectedCreatedAt, expectedLastUpdateAt2, DEFAULT_USER,
-                    TraceThreadStatus.INACTIVE, traces);
+            var expectedTraceThreadModel = createTraceThreadModel(threadId, projectId, expectedCreatedAt,
+                    expectedLastUpdatedAt, DEFAULT_USER, TraceThreadStatus.INACTIVE, traces);
 
-            // Then: Verify that threads are eventually closed according to custom timeout (2 seconds)
-            Awaitility.await().pollInterval(500, TimeUnit.MILLISECONDS).untilAsserted(() -> {
-                verifyClosedThreads(projectId, projectName, apiKey, workspaceName, List.of(expectedTraceThreadModel2));
-            });
+            var expectedLastUpdateAt = Instant.now();
+            TraceThread expectedUpdatedTraceThreadModel = expectedTraceThreadModel.toBuilder()
+                    .lastUpdatedAt(expectedLastUpdateAt)
+                    .build();
+
+            // Then: Verify threads are closed according to workspace custom timeout
+            Awaitility.await().atMost(AWAIT_TIMEOUT_SECONDS, TimeUnit.SECONDS).pollInterval(200, TimeUnit.MILLISECONDS)
+                    .untilAsserted(() -> {
+                        verifyClosedThreads(projectId, projectName, apiKey, workspaceName,
+                                List.of(expectedUpdatedTraceThreadModel));
+                    });
+        }
+
+        @Test
+        @DisplayName("Should close trace threads when workspace configuration has a null timeout, falling back to default")
+        void shouldCloseTraceThreadsWhenWorkspaceConfigurationTimeoutIsNull() {
+            // Given
+            var workspaceName = RandomStringUtils.secure().nextAlphanumeric(10);
+            var workspaceId = UUID.randomUUID().toString();
+            var apiKey = UUID.randomUUID().toString();
+
+            mockTargetWorkspace(apiKey, workspaceName, workspaceId);
+
+            String projectName = RandomStringUtils.secure().nextAlphanumeric(10);
+            var projectId = projectResourceClient.createProject(projectName, apiKey, workspaceName);
+            var threadId = UUID_V7_GENERATOR.generate().toString();
+
+            // A workspace configuration that exists but leaves timeoutToMarkThreadAsInactive unset
+            // (only truncationOnTables is configured). This used to make the closing subscriber throw
+            // "The mapper returned a null value." and the thread would never close.
+            WorkspaceConfiguration configuration = WorkspaceConfiguration.builder()
+                    .truncationOnTables(true)
+                    .build();
+
+            workspaceResourceClient.upsertWorkspaceConfiguration(configuration, apiKey, workspaceName);
+
+            // Create multiple trace within same thread
+            List<Trace> traces = createListOfTraces(projectName, threadId);
+
+            var expectedCreatedAt = Instant.now();
+
+            // When: Creating trace threads
+            traceResourceClient.batchCreateTraces(traces, apiKey, workspaceName);
+
+            Instant expectedLastUpdatedAt = getExpectedLastUpdatedAt(traces);
+
+            var expectedTraceThreadModel = createTraceThreadModel(threadId, projectId, expectedCreatedAt,
+                    expectedLastUpdatedAt, DEFAULT_USER, TraceThreadStatus.INACTIVE, traces);
+
+            // With a null workspace timeout, closure falls back to the configured default; wait it out
+            TestUtils.waitForMillis(defaultThreadTimeout.plus(CLOSURE_WAIT_BUFFER).toMillis());
+
+            var expectedLastUpdateAt = Instant.now();
+            TraceThread expectedUpdatedTraceThreadModel = expectedTraceThreadModel.toBuilder()
+                    .lastUpdatedAt(expectedLastUpdateAt)
+                    .build();
+
+            // Then: the thread is closed using the default timeout instead of failing with an NPE
+            Awaitility.await().atMost(AWAIT_TIMEOUT_SECONDS, TimeUnit.SECONDS).pollInterval(500, TimeUnit.MILLISECONDS)
+                    .untilAsserted(() -> {
+                        verifyClosedThreads(projectId, projectName, apiKey, workspaceName,
+                                List.of(expectedUpdatedTraceThreadModel));
+                    });
         }
 
         private void verifyClosedThreads(UUID projectId, String projectName, String apiKey, String workspaceName,
@@ -402,6 +494,8 @@ class TraceThreadsClosingJobTest {
                     .lastUpdatedAt(expectedLastUpdatedAt)
                     .lastUpdatedBy(lastUpdatedBy)
                     .totalEstimatedCost(null)
+                    .environment(expectedTraces.stream().min(Comparator.comparing(Trace::id)).orElseThrow()
+                            .environment())
                     .build();
         }
 

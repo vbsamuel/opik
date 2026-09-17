@@ -7,7 +7,7 @@ import pydantic
 from ..core.pydantic_utilities import IS_PYDANTIC_V2, UniversalBaseModel
 from .error_info_experiment_item_bulk_write_view import ErrorInfoExperimentItemBulkWriteView
 from .json_list_string_experiment_item_bulk_write_view import JsonListStringExperimentItemBulkWriteView
-from .json_node_experiment_item_bulk_write_view import JsonNodeExperimentItemBulkWriteView
+from .trace_experiment_item_bulk_write_view_source import TraceExperimentItemBulkWriteViewSource
 
 
 class TraceExperimentItemBulkWriteView(UniversalBaseModel):
@@ -26,11 +26,18 @@ class TraceExperimentItemBulkWriteView(UniversalBaseModel):
     end_time: typing.Optional[dt.datetime] = None
     input: typing.Optional[JsonListStringExperimentItemBulkWriteView] = None
     output: typing.Optional[JsonListStringExperimentItemBulkWriteView] = None
-    metadata: typing.Optional[JsonNodeExperimentItemBulkWriteView] = None
+    metadata: typing.Optional[JsonListStringExperimentItemBulkWriteView] = None
     tags: typing.Optional[typing.List[str]] = None
     error_info: typing.Optional[ErrorInfoExperimentItemBulkWriteView] = None
     last_updated_at: typing.Optional[dt.datetime] = None
+    ttft: typing.Optional[float] = pydantic.Field(default=None)
+    """
+    Time to first token in milliseconds
+    """
+
     thread_id: typing.Optional[str] = None
+    source: typing.Optional[TraceExperimentItemBulkWriteViewSource] = None
+    environment: typing.Optional[str] = None
 
     if IS_PYDANTIC_V2:
         model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(extra="allow", frozen=True)  # type: ignore # Pydantic v2

@@ -4,12 +4,15 @@ import com.comet.opik.api.TraceThreadStatus;
 import lombok.Builder;
 
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 @Builder(toBuilder = true)
 public record TraceThreadCriteria(
         List<UUID> ids,
         UUID projectId,
-        List<String> threadIds,
-        TraceThreadStatus status) {
+        Set<String> threadIds,
+        TraceThreadStatus status,
+        UUID uuidFromTime,
+        UUID uuidToTime) {
 }

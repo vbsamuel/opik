@@ -1,8 +1,7 @@
 package com.comet.opik.api.resources.v1.events;
 
-import com.comet.opik.api.events.ThreadsReopened;
+import com.comet.opik.api.ThreadTimestamps;
 import com.comet.opik.api.events.TracesCreated;
-import com.comet.opik.domain.FeedbackScoreService;
 import com.comet.opik.domain.threads.TraceThreadService;
 import com.comet.opik.infrastructure.auth.RequestContext;
 import com.google.common.eventbus.Subscribe;
@@ -27,7 +26,6 @@ import java.util.UUID;
 public class TraceThreadListener {
 
     private final @NonNull TraceThreadService traceThreadService;
-    private final @NonNull FeedbackScoreService feedbackScoreService;
 
     /**
      * Handles the TracesCreated event by processing trace threads in a thread-safe manner.
@@ -43,32 +41,61 @@ public class TraceThreadListener {
                 event.workspaceId(),
                 event.projectIds());
 
-        Map<UUID, Map<String, Instant>> projectThreadIds = new HashMap<>();
+        Map<UUID, Map<String, ThreadTimestamps>> projectThreadInfo = new HashMap<>();
 
         event.traces().forEach(trace -> {
             UUID projectId = trace.projectId();
             String threadId = trace.threadId();
 
             if (StringUtils.isNotBlank(threadId)) {
-                Map<String, Instant> threadIdAndLastUpdatedAt = projectThreadIds
+                Map<String, ThreadTimestamps> threadInfo = projectThreadInfo
                         .computeIfAbsent(projectId, id -> new HashMap<>());
 
-                // Keeps the most recent lastUpdatedAt for each threadId
-                threadIdAndLastUpdatedAt.computeIfPresent(threadId,
-                        (id, currentTime) -> {
-                            Instant newTime = Optional.ofNullable(trace.lastUpdatedAt())
-                                    .orElseGet(Instant::now);
-                            return newTime.isAfter(currentTime) ? newTime : currentTime;
-                        });
+                // Track both the minimum trace ID (for thread model ID generation)
+                // and the most recent lastUpdatedAt (for thread updates)
+                threadInfo.compute(threadId, (id, existing) -> {
+                    Instant lastUpdatedAt = Optional.ofNullable(trace.lastUpdatedAt())
+                            .orElseGet(Instant::now);
+                    UUID traceId = trace.id();
 
-                // If the threadId is not present, add it with the lastUpdatedAt
-                threadIdAndLastUpdatedAt.computeIfAbsent(threadId, id -> Optional.ofNullable(trace.lastUpdatedAt())
-                        .orElseGet(Instant::now));
+                    if (existing == null) {
+                        return ThreadTimestamps.builder()
+                                .firstTraceId(traceId)
+                                .maxLastUpdatedAt(lastUpdatedAt)
+                                .firstTraceSource(trace.source())
+                                .firstTraceEnvironment(trace.environment())
+                                .build();
+                    }
 
+                    // Keep the minimum trace ID (earliest timestamp in UUIDv7)
+                    // Note: UUIDv7 compareTo() works correctly here because UUID v7 are
+                    // lexicographically ordered by their timestamp component
+                    UUID minTraceId = traceId.compareTo(existing.firstTraceId()) < 0
+                            ? traceId
+                            : existing.firstTraceId();
+
+                    // Keep the most recent lastUpdatedAt
+                    var maxLastUpdatedAt = lastUpdatedAt.isAfter(existing.maxLastUpdatedAt())
+                            ? lastUpdatedAt
+                            : existing.maxLastUpdatedAt();
+
+                    // Track the source from the chronologically earliest trace (matching firstTraceId).
+                    // In practice traces in a thread originate from the same source, but this is not enforced.
+                    boolean isEarlier = traceId.compareTo(existing.firstTraceId()) < 0;
+                    var earliestSource = isEarlier ? trace.source() : existing.firstTraceSource();
+                    var earliestEnvironment = isEarlier ? trace.environment() : existing.firstTraceEnvironment();
+
+                    return existing.toBuilder()
+                            .firstTraceId(minTraceId)
+                            .maxLastUpdatedAt(maxLastUpdatedAt)
+                            .firstTraceSource(earliestSource)
+                            .firstTraceEnvironment(earliestEnvironment)
+                            .build();
+                });
             }
         });
 
-        processEvent(event, projectThreadIds)
+        processEvent(event, projectThreadInfo)
                 .doOnError(error -> {
                     log.error(
                             "Fail to process TracesCreated event for workspace: '{}', projectIds: '{}', error: '{}'",
@@ -84,47 +111,21 @@ public class TraceThreadListener {
     }
 
     private Flux<Void> processEvent(TracesCreated event,
-            Map<UUID, Map<String, Instant>> projectThreadIdAndLastUpdateAts) {
+            Map<UUID, Map<String, ThreadTimestamps>> projectThreadInfo) {
 
-        return Flux.fromIterable(projectThreadIdAndLastUpdateAts.entrySet())
+        return Flux.fromIterable(projectThreadInfo.entrySet())
                 .flatMap(entry -> {
                     UUID projectId = entry.getKey();
-                    Map<String, Instant> threadIdAndLastUpdateAts = entry.getValue();
-                    return processProjectTraceThread(event, projectId, threadIdAndLastUpdateAts);
+                    Map<String, ThreadTimestamps> threadInfo = entry.getValue();
+                    return processProjectTraceThread(event, projectId, threadInfo);
                 });
     }
 
     private Mono<Void> processProjectTraceThread(TracesCreated event, UUID projectId,
-            Map<String, Instant> threadIdAndLastUpdateAts) {
+            Map<String, ThreadTimestamps> threadInfo) {
         log.info("Processing trace threads for workspace: '{}', projectId: '{}', threadIds: '[{}]'",
-                event.workspaceId(), projectId, threadIdAndLastUpdateAts.keySet());
-        return traceThreadService.processTraceThreads(threadIdAndLastUpdateAts, projectId);
-    }
-
-    /**
-     * Handles the ThreadsReopened event by deleting manual scores for the specified threads.
-     * This is triggered when threads are reopened, and it ensures that any manual scores
-     * associated with those threads are removed.
-     *
-     * @param event the ThreadsReopened event containing the thread model IDs and project ID
-     */
-    @Subscribe
-    public void onThreadsReopened(@NonNull ThreadsReopened event) {
-        log.info("Received ThreadsReopened event for workspace: '{}', projectId: '{}', threadModelIds: '[{}]'",
-                event.workspaceId(), event.projectId(), event.threadModelIds());
-
-        feedbackScoreService.deleteThreadManualScores(event.threadModelIds(), event.projectId())
-                .doOnError(error -> {
-                    log.info(
-                            "Failed to delete manual scores for threads in workspace: '{}', projectId: '{}'",
-                            event.workspaceId(), event.projectId());
-                    log.error("Error deleting manual scores for threads", error);
-                })
-                .doOnSuccess(unused -> log.info("Deleted manual scores for threads in workspace: '{}', projectId: '{}'",
-                        event.workspaceId(), event.projectId()))
-                .contextWrite(ctx -> ctx.put(RequestContext.WORKSPACE_ID, event.workspaceId())
-                        .put(RequestContext.USER_NAME, event.userName()))
-                .subscribe();
+                event.workspaceId(), projectId, threadInfo.keySet());
+        return traceThreadService.processTraceThreads(threadInfo, projectId);
     }
 
 }

@@ -1,5 +1,6 @@
 package com.comet.opik.api.evaluators;
 
+import com.comet.opik.api.filter.TraceThreadFilter;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
@@ -11,6 +12,8 @@ import lombok.EqualsAndHashCode;
 import lombok.experimental.SuperBuilder;
 
 import java.beans.ConstructorProperties;
+import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 import static com.comet.opik.api.evaluators.AutomationRuleEvaluatorTraceThreadLlmAsJudge.TraceThreadLlmAsJudgeCode;
@@ -22,13 +25,28 @@ import static com.comet.opik.api.evaluators.AutomationRuleEvaluatorTraceThreadLl
 @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
 public final class AutomationRuleEvaluatorUpdateTraceThreadLlmAsJudge
         extends
-            AutomationRuleEvaluatorUpdate<TraceThreadLlmAsJudgeCode> {
+            AutomationRuleEvaluatorUpdate<TraceThreadLlmAsJudgeCode, TraceThreadFilter> {
 
-    @ConstructorProperties({"name", "samplingRate", "code", "projectId"})
+    @ConstructorProperties({"name", "samplingRate", "enabled", "triggerScope", "filters", "code", "projectId",
+            "projectIds"})
     public AutomationRuleEvaluatorUpdateTraceThreadLlmAsJudge(
-            @NotBlank String name, float samplingRate, @NotNull TraceThreadLlmAsJudgeCode code,
-            @NotNull UUID projectId) {
-        super(name, samplingRate, code, projectId);
+            @NotBlank String name, float samplingRate, boolean enabled, EvalTriggerScope triggerScope,
+            List<TraceThreadFilter> filters,
+            @NotNull TraceThreadLlmAsJudgeCode code,
+            UUID projectId,
+            Set<UUID> projectIds) {
+        super(name, samplingRate, enabled, triggerScope, filters, code, projectId, projectIds);
+    }
+
+    /**
+     * Two purposes:
+     * - Makes the polymorphic T code available for serialization.
+     * - Provides the specific type T for Open API and Fern.
+     */
+    @Override
+    @JsonProperty
+    public List<TraceThreadFilter> getFilters() {
+        return super.getFilters();
     }
 
     /**

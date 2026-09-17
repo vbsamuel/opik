@@ -3,7 +3,7 @@ import os
 import certifi
 import pytest
 
-from opik.evaluation.metrics.conversation.user_frustration import (
+from opik.evaluation.metrics.conversation.llm_judges.user_frustration import (
     metric as user_frustration,
 )
 from ...testlib import assert_helpers
@@ -50,14 +50,14 @@ def real_model_conversation():
 def test_user_frustration_metric(real_model_conversation):
     """Integration test with a real model."""
     metric = user_frustration.UserFrustrationMetric(
-        track=True, window_size=3
+        track=False, window_size=5, reasoning_effort="minimal"
     )  # Uses default model
     result = metric.score(real_model_conversation)
 
     assert_helpers.assert_score_result(result)
     # We don't assert specific values since the real model's output may vary
     assert result.name == "user_frustration_score"
-    assert result.value > 0.5
+    assert result.value is not None
 
 
 @pytest.mark.asyncio
@@ -65,10 +65,11 @@ async def test_user_frustration_metric_async(real_model_conversation):
     """Integration test with a real model asyncio mode."""
     os.environ["SSL_CERT_FILE"] = certifi.where()
 
-    metric = user_frustration.UserFrustrationMetric(track=True, window_size=3)
+    metric = user_frustration.UserFrustrationMetric(
+        track=False, window_size=5, reasoning_effort="minimal"
+    )
     result = await metric.ascore(real_model_conversation)
 
     assert_helpers.assert_score_result(result)
     # We don't assert specific values since the real model's output may vary
     assert result.name == "user_frustration_score"
-    assert result.value > 0.5

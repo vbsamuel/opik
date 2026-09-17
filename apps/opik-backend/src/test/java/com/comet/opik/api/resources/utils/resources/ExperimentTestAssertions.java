@@ -1,21 +1,62 @@
 package com.comet.opik.api.resources.utils.resources;
 
+import com.comet.opik.api.Experiment;
 import com.comet.opik.api.ExperimentItem;
 import com.comet.opik.api.FeedbackScore;
 import com.comet.opik.api.resources.utils.CommentAssertionUtils;
 import com.comet.opik.api.resources.utils.StatsUtils;
 
 import java.math.BigDecimal;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 public class ExperimentTestAssertions {
 
     public static final String[] EXPERIMENT_ITEMS_IGNORED_FIELDS = {"createdAt", "lastUpdatedAt",
-            "feedbackScores.createdAt", "feedbackScores.lastUpdatedAt", "comments.createdAt", "comments.lastUpdatedAt"
+            "feedbackScores.createdAt", "feedbackScores.lastUpdatedAt", "comments.createdAt", "comments.lastUpdatedAt",
+            "feedbackScores.valueByAuthor", "feedbackScores.sourceQueueId", "comments.sourceQueueId", "projectName"
     };
+
+    // Experiment items returned by the bulk endpoint get server-generated ids/traceId/experimentId, so those
+    // are ignored on top of the base ignored fields. projectId is intentionally NOT ignored — it is asserted.
+    public static final String[] BULK_EXPERIMENT_ITEMS_IGNORED_FIELDS = Stream.concat(
+            Arrays.stream(EXPERIMENT_ITEMS_IGNORED_FIELDS),
+            Stream.of("traceId", "id", "experimentId"))
+            .toArray(String[]::new);
+
+    public static final String[] EXPERIMENT_IGNORED_FIELDS = new String[]{
+            "id", "datasetId", "name", "feedbackScores", "assertionScores", "traceCount", "createdAt",
+            "lastUpdatedAt", "createdBy", "lastUpdatedBy", "comments", "projectName", "datasetItemCount"};
+
+    /**
+     * Asserts that {@code actual} matches {@code expected} via recursive comparison ignoring
+     * {@link #EXPERIMENT_IGNORED_FIELDS}, plus per-field equality on every ignored scalar
+     * <em>except</em> {@code lastUpdatedAt} and the async-aggregation fields. {@code lastUpdatedAt}
+     * is left to the caller because its expected semantic is scenario-specific ({@code ==} for an
+     * untouched experiment, {@code isAfter} for one re-written by a job). Aggregation fields
+     * ({@code feedbackScores}/{@code traceCount}/etc.) are also async and out of this helper's
+     * scope. Fields that <em>aren't</em> in {@code EXPERIMENT_IGNORED_FIELDS} (notably
+     * {@code projectId}) are covered by the recursive comparison, so no explicit re-assertion is
+     * needed for them here.
+     */
+    public static void assertExperimentEqual(Experiment actual, Experiment expected) {
+        assertThat(actual)
+                .usingRecursiveComparison()
+                .ignoringFields(EXPERIMENT_IGNORED_FIELDS)
+                .isEqualTo(expected);
+
+        assertThat(actual.id()).isEqualTo(expected.id());
+        assertThat(actual.datasetId()).isEqualTo(expected.datasetId());
+        assertThat(actual.name()).isEqualTo(expected.name());
+        assertThat(actual.createdAt()).isEqualTo(expected.createdAt());
+        assertThat(actual.createdBy()).isEqualTo(expected.createdBy());
+        assertThat(actual.lastUpdatedBy()).isEqualTo(expected.lastUpdatedBy());
+        assertThat(actual.projectName()).isEqualTo(expected.projectName());
+    }
 
     public static void assertExperimentResultsIgnoringFields(List<ExperimentItem> actual, List<ExperimentItem> expected,
             String[] ignoringFields) {
@@ -23,7 +64,7 @@ public class ExperimentTestAssertions {
 
         assertThat(actual)
                 .usingRecursiveComparison()
-                .withComparatorForType(BigDecimal::compareTo, BigDecimal.class)
+                .withComparatorForType(StatsUtils::bigDecimalComparator, BigDecimal.class)
                 .withComparatorForFields(StatsUtils::closeToEpsilonComparator, "duration")
                 .ignoringCollectionOrderInFields("feedbackScores", "comments")
                 .ignoringFields(ignoringFields)

@@ -5,7 +5,9 @@ import typing
 
 import pydantic
 from ..core.pydantic_utilities import IS_PYDANTIC_V2, UniversalBaseModel
-from .json_node_write import JsonNodeWrite
+from .error_info_write import ErrorInfoWrite
+from .json_list_string_write import JsonListStringWrite
+from .optimization_studio_config_write import OptimizationStudioConfigWrite
 from .optimization_write_status import OptimizationWriteStatus
 
 
@@ -13,9 +15,21 @@ class OptimizationWrite(UniversalBaseModel):
     id: typing.Optional[str] = None
     name: typing.Optional[str] = None
     dataset_name: str
+    project_name: typing.Optional[str] = pydantic.Field(default=None)
+    """
+    Project name. Creates project if it doesn't exist. Ignored when project_id is provided.
+    """
+
+    project_id: typing.Optional[str] = pydantic.Field(default=None)
+    """
+    Project ID. Takes precedence over project_name when both are provided.
+    """
+
     objective_name: str
     status: OptimizationWriteStatus
-    metadata: typing.Optional[JsonNodeWrite] = None
+    metadata: typing.Optional[JsonListStringWrite] = None
+    studio_config: typing.Optional[OptimizationStudioConfigWrite] = None
+    error_info: typing.Optional[ErrorInfoWrite] = None
     last_updated_at: typing.Optional[dt.datetime] = None
 
     if IS_PYDANTIC_V2:

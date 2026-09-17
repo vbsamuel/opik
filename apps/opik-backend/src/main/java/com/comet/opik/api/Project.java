@@ -7,8 +7,8 @@ import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.fasterxml.jackson.databind.annotation.JsonNaming;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.annotation.Nullable;
-import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 import lombok.Builder;
 
 import java.time.Duration;
@@ -23,12 +23,12 @@ import java.util.UUID;
 // for property names
 @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
 public record Project(
-        @JsonView( {
+        @JsonView({
                 Project.View.Public.class}) @Schema(accessMode = Schema.AccessMode.READ_ONLY) UUID id,
         @JsonView({Project.View.Public.class, View.Write.class}) @NotBlank String name,
         @JsonView({Project.View.Public.class, View.Write.class}) Visibility visibility,
         @JsonView({Project.View.Public.class,
-                View.Write.class}) String description,
+                View.Write.class}) @Size(max = 255, message = "cannot exceed 255 characters") String description,
         @JsonView({Project.View.Public.class}) @Schema(accessMode = Schema.AccessMode.READ_ONLY) Instant createdAt,
         @JsonView({Project.View.Public.class}) @Schema(accessMode = Schema.AccessMode.READ_ONLY) String createdBy,
         @JsonView({Project.View.Public.class}) @Schema(accessMode = Schema.AccessMode.READ_ONLY) Instant lastUpdatedAt,
@@ -48,11 +48,11 @@ public record Project(
         @JsonView({
                 Project.View.Detailed.class}) @Schema(accessMode = Schema.AccessMode.READ_ONLY) @Nullable Long traceCount,
         @JsonView({
+                Project.View.Detailed.class}) @Schema(accessMode = Schema.AccessMode.READ_ONLY) @Nullable Long threadCount,
+        @JsonView({
                 Project.View.Detailed.class}) @Schema(accessMode = Schema.AccessMode.READ_ONLY) @Nullable Long guardrailsFailedCount,
         @JsonView({
-                Project.View.Detailed.class}) @Schema(accessMode = Schema.AccessMode.READ_ONLY) @Nullable ErrorCountWithDeviation errorCount,
-        @JsonView({Project.View.Public.class, Project.View.Detailed.class,
-                View.Write.class}) @Nullable @Valid Configuration configuration){
+                Project.View.Detailed.class}) @Schema(accessMode = Schema.AccessMode.READ_ONLY) @Nullable ErrorCountWithDeviation errorCount) {
 
     @Builder(toBuilder = true)
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -73,14 +73,14 @@ public record Project(
     }
 
     public record ProjectPage(
-            @JsonView( {
+            @JsonView({
                     Project.View.Public.class}) int page,
             @JsonView({Project.View.Public.class}) int size,
             @JsonView({Project.View.Public.class}) long total,
             @JsonView({Project.View.Public.class}) List<Project> content,
             @JsonView({Project.View.Public.class}) List<String> sortableBy)
             implements
-                com.comet.opik.api.Page<Project>{
+                com.comet.opik.api.Page<Project> {
 
         public static ProjectPage empty(int page) {
             return new ProjectPage(page, 0, 0, List.of(), List.of());

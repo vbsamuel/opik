@@ -68,28 +68,44 @@ class AnyList:
 class AnyString:
     """A helper object that provides partial equality check to strings."""
 
-    def __init__(self, startswith: Optional[str] = None):
+    def __init__(
+        self, startswith: Optional[str] = None, containing: Optional[str] = None
+    ):
         self._startswith = startswith
+        self._containing = containing
 
     def __eq__(self, other):
         if not isinstance(other, str):
             return False
 
-        if self._startswith is None:
+        if self._startswith is None and self._containing is None:
             return True
 
-        if other.startswith(self._startswith):
-            return True
+        if self._startswith is not None and not other.startswith(self._startswith):
+            return False
 
-        return False
+        if self._containing is not None and self._containing not in other:
+            return False
+
+        return True
 
     def __repr__(self):
-        if self._startswith is None:
+        conditions = []
+        if self._startswith is not None:
+            conditions.append(f"startswith='{self._startswith}'")
+        if self._containing is not None:
+            conditions.append(f"containing='{self._containing}'")
+
+        if not conditions:
             return "<ANY_STRING>"
-        return "<ANY_STRING_WITH_STARTSWITH_CONDITION>"
+
+        return f"<ANY_STRING({', '.join(conditions)})>"
 
     def starting_with(self, startswith: str):
-        return AnyString(startswith=startswith)
+        return AnyString(startswith=startswith, containing=self._containing)
+
+    def containing(self, containing: str):
+        return AnyString(startswith=self._startswith, containing=containing)
 
 
 ANY = mock.ANY

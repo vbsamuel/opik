@@ -5,10 +5,16 @@ import typing
 
 from ..core.client_wrapper import AsyncClientWrapper, SyncClientWrapper
 from ..core.request_options import RequestOptions
+from ..types.breakdown_config import BreakdownConfig
 from ..types.result import Result
+from ..types.span_filter import SpanFilter
+from ..types.token_usage_names import TokenUsageNames
+from ..types.workspace_configuration import WorkspaceConfiguration
 from ..types.workspace_metric_response import WorkspaceMetricResponse
 from ..types.workspace_metrics_summary_response import WorkspaceMetricsSummaryResponse
 from .raw_client import AsyncRawWorkspacesClient, RawWorkspacesClient
+from .types.workspace_span_metric_request_interval import WorkspaceSpanMetricRequestInterval
+from .types.workspace_span_metric_request_metric_type import WorkspaceSpanMetricRequestMetricType
 
 # this is used as the default value for optional parameters
 OMIT = typing.cast(typing.Any, ...)
@@ -73,6 +79,97 @@ class WorkspacesClient:
             start_before_end=start_before_end,
             request_options=request_options,
         )
+        return _response.data
+
+    def get_workspace_configuration(
+        self, *, request_options: typing.Optional[RequestOptions] = None
+    ) -> WorkspaceConfiguration:
+        """
+        Get workspace configuration
+
+        Parameters
+        ----------
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        WorkspaceConfiguration
+            Workspace Configuration
+
+        Examples
+        --------
+        from Opik import OpikApi
+        client = OpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        client.workspaces.get_workspace_configuration()
+        """
+        _response = self._raw_client.get_workspace_configuration(request_options=request_options)
+        return _response.data
+
+    def upsert_workspace_configuration(
+        self,
+        *,
+        timeout_to_mark_thread_as_inactive: typing.Optional[str] = OMIT,
+        truncation_on_tables: typing.Optional[bool] = OMIT,
+        color_map: typing.Optional[typing.Dict[str, str]] = OMIT,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> WorkspaceConfiguration:
+        """
+        Upsert workspace configuration
+
+        Parameters
+        ----------
+        timeout_to_mark_thread_as_inactive : typing.Optional[str]
+            Duration in ISO-8601 format (e.g., PT30M for 30 minutes, PT2H for 2 hours, P1D for 1 day). Minimum precision supported is seconds, please use a duration with seconds precision or higher. Also, the max duration allowed is 7 days.
+
+        truncation_on_tables : typing.Optional[bool]
+            Enable or disable data truncation in table views. When disabled, the frontend will limit pagination to prevent performance issues. Default: true (truncation enabled).
+
+        color_map : typing.Optional[typing.Dict[str, str]]
+            Workspace-level color map. Maps label names to hex color values (e.g. #FF0000). Max 10000 entries.
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        WorkspaceConfiguration
+            Configuration Updated
+
+        Examples
+        --------
+        from Opik import OpikApi
+        client = OpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        client.workspaces.upsert_workspace_configuration()
+        """
+        _response = self._raw_client.upsert_workspace_configuration(
+            timeout_to_mark_thread_as_inactive=timeout_to_mark_thread_as_inactive,
+            truncation_on_tables=truncation_on_tables,
+            color_map=color_map,
+            request_options=request_options,
+        )
+        return _response.data
+
+    def delete_workspace_configuration(self, *, request_options: typing.Optional[RequestOptions] = None) -> None:
+        """
+        Delete workspace configuration
+
+        Parameters
+        ----------
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        None
+
+        Examples
+        --------
+        from Opik import OpikApi
+        client = OpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        client.workspaces.delete_workspace_configuration()
+        """
+        _response = self._raw_client.delete_workspace_configuration(request_options=request_options)
         return _response.data
 
     def get_cost(
@@ -164,6 +261,100 @@ class WorkspacesClient:
             project_ids=project_ids,
             start_before_end=start_before_end,
             request_options=request_options,
+        )
+        return _response.data
+
+    def get_workspace_span_metric(
+        self,
+        *,
+        interval_start: dt.datetime,
+        project_ids: typing.Optional[typing.Sequence[str]] = OMIT,
+        metric_type: typing.Optional[WorkspaceSpanMetricRequestMetricType] = OMIT,
+        interval: typing.Optional[WorkspaceSpanMetricRequestInterval] = OMIT,
+        breakdown: typing.Optional[BreakdownConfig] = OMIT,
+        filters: typing.Optional[typing.Sequence[SpanFilter]] = OMIT,
+        interval_end: typing.Optional[dt.datetime] = OMIT,
+        start_before_end: typing.Optional[bool] = OMIT,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> WorkspaceMetricResponse:
+        """
+        Gets a span metric time series aggregated across the workspace. When project_ids is empty, all projects in the workspace are included; otherwise only the given projects.
+
+        Parameters
+        ----------
+        interval_start : dt.datetime
+
+        project_ids : typing.Optional[typing.Sequence[str]]
+
+        metric_type : typing.Optional[WorkspaceSpanMetricRequestMetricType]
+
+        interval : typing.Optional[WorkspaceSpanMetricRequestInterval]
+
+        breakdown : typing.Optional[BreakdownConfig]
+
+        filters : typing.Optional[typing.Sequence[SpanFilter]]
+
+        interval_end : typing.Optional[dt.datetime]
+
+        start_before_end : typing.Optional[bool]
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        WorkspaceMetricResponse
+            Workspace span metric
+
+        Examples
+        --------
+        from Opik import OpikApi
+        import datetime
+        client = OpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        client.workspaces.get_workspace_span_metric(interval_start=datetime.datetime.fromisoformat("2024-01-15 09:30:00+00:00", ), )
+        """
+        _response = self._raw_client.get_workspace_span_metric(
+            interval_start=interval_start,
+            project_ids=project_ids,
+            metric_type=metric_type,
+            interval=interval,
+            breakdown=breakdown,
+            filters=filters,
+            interval_end=interval_end,
+            start_before_end=start_before_end,
+            request_options=request_options,
+        )
+        return _response.data
+
+    def get_workspace_token_usage_names(
+        self,
+        *,
+        project_ids: typing.Optional[typing.Sequence[str]] = OMIT,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> TokenUsageNames:
+        """
+        Gets the distinct span token usage key names aggregated across the workspace. When project_ids is empty, all projects in the workspace are included; otherwise only the given projects.
+
+        Parameters
+        ----------
+        project_ids : typing.Optional[typing.Sequence[str]]
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        TokenUsageNames
+            Token Usage names resource
+
+        Examples
+        --------
+        from Opik import OpikApi
+        client = OpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        client.workspaces.get_workspace_token_usage_names()
+        """
+        _response = self._raw_client.get_workspace_token_usage_names(
+            project_ids=project_ids, request_options=request_options
         )
         return _response.data
 
@@ -278,6 +469,106 @@ class AsyncWorkspacesClient:
         )
         return _response.data
 
+    async def get_workspace_configuration(
+        self, *, request_options: typing.Optional[RequestOptions] = None
+    ) -> WorkspaceConfiguration:
+        """
+        Get workspace configuration
+
+        Parameters
+        ----------
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        WorkspaceConfiguration
+            Workspace Configuration
+
+        Examples
+        --------
+        from Opik import AsyncOpikApi
+        import asyncio
+        client = AsyncOpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        async def main() -> None:
+            await client.workspaces.get_workspace_configuration()
+        asyncio.run(main())
+        """
+        _response = await self._raw_client.get_workspace_configuration(request_options=request_options)
+        return _response.data
+
+    async def upsert_workspace_configuration(
+        self,
+        *,
+        timeout_to_mark_thread_as_inactive: typing.Optional[str] = OMIT,
+        truncation_on_tables: typing.Optional[bool] = OMIT,
+        color_map: typing.Optional[typing.Dict[str, str]] = OMIT,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> WorkspaceConfiguration:
+        """
+        Upsert workspace configuration
+
+        Parameters
+        ----------
+        timeout_to_mark_thread_as_inactive : typing.Optional[str]
+            Duration in ISO-8601 format (e.g., PT30M for 30 minutes, PT2H for 2 hours, P1D for 1 day). Minimum precision supported is seconds, please use a duration with seconds precision or higher. Also, the max duration allowed is 7 days.
+
+        truncation_on_tables : typing.Optional[bool]
+            Enable or disable data truncation in table views. When disabled, the frontend will limit pagination to prevent performance issues. Default: true (truncation enabled).
+
+        color_map : typing.Optional[typing.Dict[str, str]]
+            Workspace-level color map. Maps label names to hex color values (e.g. #FF0000). Max 10000 entries.
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        WorkspaceConfiguration
+            Configuration Updated
+
+        Examples
+        --------
+        from Opik import AsyncOpikApi
+        import asyncio
+        client = AsyncOpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        async def main() -> None:
+            await client.workspaces.upsert_workspace_configuration()
+        asyncio.run(main())
+        """
+        _response = await self._raw_client.upsert_workspace_configuration(
+            timeout_to_mark_thread_as_inactive=timeout_to_mark_thread_as_inactive,
+            truncation_on_tables=truncation_on_tables,
+            color_map=color_map,
+            request_options=request_options,
+        )
+        return _response.data
+
+    async def delete_workspace_configuration(self, *, request_options: typing.Optional[RequestOptions] = None) -> None:
+        """
+        Delete workspace configuration
+
+        Parameters
+        ----------
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        None
+
+        Examples
+        --------
+        from Opik import AsyncOpikApi
+        import asyncio
+        client = AsyncOpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        async def main() -> None:
+            await client.workspaces.delete_workspace_configuration()
+        asyncio.run(main())
+        """
+        _response = await self._raw_client.delete_workspace_configuration(request_options=request_options)
+        return _response.data
+
     async def get_cost(
         self,
         *,
@@ -373,6 +664,106 @@ class AsyncWorkspacesClient:
             project_ids=project_ids,
             start_before_end=start_before_end,
             request_options=request_options,
+        )
+        return _response.data
+
+    async def get_workspace_span_metric(
+        self,
+        *,
+        interval_start: dt.datetime,
+        project_ids: typing.Optional[typing.Sequence[str]] = OMIT,
+        metric_type: typing.Optional[WorkspaceSpanMetricRequestMetricType] = OMIT,
+        interval: typing.Optional[WorkspaceSpanMetricRequestInterval] = OMIT,
+        breakdown: typing.Optional[BreakdownConfig] = OMIT,
+        filters: typing.Optional[typing.Sequence[SpanFilter]] = OMIT,
+        interval_end: typing.Optional[dt.datetime] = OMIT,
+        start_before_end: typing.Optional[bool] = OMIT,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> WorkspaceMetricResponse:
+        """
+        Gets a span metric time series aggregated across the workspace. When project_ids is empty, all projects in the workspace are included; otherwise only the given projects.
+
+        Parameters
+        ----------
+        interval_start : dt.datetime
+
+        project_ids : typing.Optional[typing.Sequence[str]]
+
+        metric_type : typing.Optional[WorkspaceSpanMetricRequestMetricType]
+
+        interval : typing.Optional[WorkspaceSpanMetricRequestInterval]
+
+        breakdown : typing.Optional[BreakdownConfig]
+
+        filters : typing.Optional[typing.Sequence[SpanFilter]]
+
+        interval_end : typing.Optional[dt.datetime]
+
+        start_before_end : typing.Optional[bool]
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        WorkspaceMetricResponse
+            Workspace span metric
+
+        Examples
+        --------
+        from Opik import AsyncOpikApi
+        import datetime
+        import asyncio
+        client = AsyncOpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        async def main() -> None:
+            await client.workspaces.get_workspace_span_metric(interval_start=datetime.datetime.fromisoformat("2024-01-15 09:30:00+00:00", ), )
+        asyncio.run(main())
+        """
+        _response = await self._raw_client.get_workspace_span_metric(
+            interval_start=interval_start,
+            project_ids=project_ids,
+            metric_type=metric_type,
+            interval=interval,
+            breakdown=breakdown,
+            filters=filters,
+            interval_end=interval_end,
+            start_before_end=start_before_end,
+            request_options=request_options,
+        )
+        return _response.data
+
+    async def get_workspace_token_usage_names(
+        self,
+        *,
+        project_ids: typing.Optional[typing.Sequence[str]] = OMIT,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> TokenUsageNames:
+        """
+        Gets the distinct span token usage key names aggregated across the workspace. When project_ids is empty, all projects in the workspace are included; otherwise only the given projects.
+
+        Parameters
+        ----------
+        project_ids : typing.Optional[typing.Sequence[str]]
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        TokenUsageNames
+            Token Usage names resource
+
+        Examples
+        --------
+        from Opik import AsyncOpikApi
+        import asyncio
+        client = AsyncOpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        async def main() -> None:
+            await client.workspaces.get_workspace_token_usage_names()
+        asyncio.run(main())
+        """
+        _response = await self._raw_client.get_workspace_token_usage_names(
+            project_ids=project_ids, request_options=request_options
         )
         return _response.data
 

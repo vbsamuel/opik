@@ -13,11 +13,13 @@ export class TraceFeedbackScoresBatchQueue extends BatchQueue<
 > {
   constructor(
     private readonly api: OpikApiClientTemp,
-    delay?: number,
+    delay?: number
   ) {
     super({
       delay,
-      enableDeleteBatch: false,
+      enableCreateBatch: true,
+      enableUpdateBatch: true,
+      enableDeleteBatch: true,
       name: "TraceFeedbackScoresBatchQueue",
     });
   }
@@ -29,7 +31,7 @@ export class TraceFeedbackScoresBatchQueue extends BatchQueue<
   protected async createEntities(scores: FeedbackScoreBatchItem[]) {
     await this.api.traces.scoreBatchOfTraces(
       { scores },
-      this.api.requestOptions,
+      this.api.requestOptions
     );
   }
 
@@ -46,9 +48,11 @@ export class TraceFeedbackScoresBatchQueue extends BatchQueue<
       await this.api.traces.deleteTraceFeedbackScore(
         scoreId.id,
         {
-          name: scoreId.name,
+          body: {
+            name: scoreId.name,
+          },
         },
-        this.api.requestOptions,
+        this.api.requestOptions
       );
     }
   }

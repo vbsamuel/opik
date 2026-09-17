@@ -7,7 +7,7 @@ import pydantic
 from ..core.pydantic_utilities import IS_PYDANTIC_V2, UniversalBaseModel
 from .error_info_write import ErrorInfoWrite
 from .json_list_string_write import JsonListStringWrite
-from .json_node_write import JsonNodeWrite
+from .span_write_source import SpanWriteSource
 from .span_write_type import SpanWriteType
 
 
@@ -26,7 +26,7 @@ class SpanWrite(UniversalBaseModel):
     end_time: typing.Optional[dt.datetime] = None
     input: typing.Optional[JsonListStringWrite] = None
     output: typing.Optional[JsonListStringWrite] = None
-    metadata: typing.Optional[JsonNodeWrite] = None
+    metadata: typing.Optional[JsonListStringWrite] = None
     model: typing.Optional[str] = None
     provider: typing.Optional[str] = None
     tags: typing.Optional[typing.List[str]] = None
@@ -35,6 +35,13 @@ class SpanWrite(UniversalBaseModel):
     last_updated_at: typing.Optional[dt.datetime] = None
     total_estimated_cost: typing.Optional[float] = None
     total_estimated_cost_version: typing.Optional[str] = None
+    ttft: typing.Optional[float] = pydantic.Field(default=None)
+    """
+    Time to first token in milliseconds
+    """
+
+    source: typing.Optional[SpanWriteSource] = None
+    environment: typing.Optional[str] = None
 
     if IS_PYDANTIC_V2:
         model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(extra="allow", frozen=True)  # type: ignore # Pydantic v2

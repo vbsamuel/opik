@@ -3,12 +3,17 @@ package com.comet.opik.api.resources.v1.priv;
 import com.codahale.metrics.annotation.Timed;
 import com.comet.opik.api.DeleteIdsHolder;
 import com.comet.opik.api.Optimization;
+import com.comet.opik.api.OptimizationStudioLog;
 import com.comet.opik.api.OptimizationUpdate;
+import com.comet.opik.api.filter.FiltersFactory;
+import com.comet.opik.api.filter.OptimizationFilter;
 import com.comet.opik.domain.EntityType;
 import com.comet.opik.domain.IdGenerator;
 import com.comet.opik.domain.OptimizationSearchCriteria;
 import com.comet.opik.domain.OptimizationService;
 import com.comet.opik.infrastructure.auth.RequestContext;
+import com.comet.opik.infrastructure.auth.RequiredPermissions;
+import com.comet.opik.infrastructure.auth.WorkspaceUserPermission;
 import com.comet.opik.infrastructure.ratelimit.RateLimited;
 import com.fasterxml.jackson.annotation.JsonView;
 import io.dropwizard.jersey.errors.ErrorMessage;
@@ -41,6 +46,7 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
+import java.util.List;
 import java.util.UUID;
 
 import static com.comet.opik.utils.AsyncUtils.setRequestContext;
@@ -57,12 +63,14 @@ public class OptimizationsResource {
     private final @NonNull OptimizationService optimizationService;
     private final @NonNull Provider<RequestContext> requestContext;
     private final @NonNull IdGenerator idGenerator;
+    private final @NonNull FiltersFactory filtersFactory;
 
     @PUT
     @Operation(operationId = "upsertOptimization", summary = "Upsert optimization", description = "Upsert optimization", responses = {
             @ApiResponse(responseCode = "201", description = "Created", headers = {
                     @Header(name = "Location", required = true, example = "${basePath}/v1/private/optimizations/{id}", schema = @Schema(implementation = String.class))})})
     @RateLimited
+    @RequiredPermissions(WorkspaceUserPermission.OPTIMIZATION_STUDIO_USE)
     public Response upsert(
             @RequestBody(content = @Content(schema = @Schema(implementation = Optimization.class))) @JsonView(Optimization.View.Write.class) @NotNull @Valid Optimization optimization,
             @Context UriInfo uriInfo) {
@@ -85,18 +93,28 @@ public class OptimizationsResource {
             @ApiResponse(responseCode = "400", description = "Bad Request", content = @Content(schema = @Schema(implementation = ErrorMessage.class)))
     })
     @JsonView(Optimization.View.Public.class)
+    @RequiredPermissions(WorkspaceUserPermission.OPTIMIZATION_RUN_VIEW)
     public Response find(
             @QueryParam("page") @Min(1) @DefaultValue("1") int page,
             @QueryParam("size") @Min(1) @DefaultValue("10") int size,
             @QueryParam("dataset_id") UUID datasetId,
-            @QueryParam("name") String name,
-            @QueryParam("dataset_deleted") Boolean datasetDeleted) {
+            @QueryParam("name") @Schema(description = "Filter optimizations by name (partial match, case insensitive)") String name,
+            @QueryParam("dataset_name") @Schema(description = "Filter optimizations by dataset name (partial match)") String datasetName,
+            @QueryParam("dataset_deleted") Boolean datasetDeleted,
+            @QueryParam("project_id") UUID projectId,
+            @QueryParam("filters") String filters) {
+
+        List<OptimizationFilter> parsedFilters = (List<OptimizationFilter>) filtersFactory.newFilters(filters,
+                OptimizationFilter.LIST_TYPE_REFERENCE);
 
         var searchCriteria = OptimizationSearchCriteria.builder()
                 .datasetId(datasetId)
                 .name(name)
+                .datasetName(datasetName)
                 .datasetDeleted(datasetDeleted)
+                .filters(parsedFilters)
                 .entityType(EntityType.TRACE)
+                .projectId(projectId)
                 .build();
 
         log.info("Finding optimizations by '{}', page '{}', size '{}'", searchCriteria, page, size);
@@ -115,6 +133,7 @@ public class OptimizationsResource {
             @ApiResponse(responseCode = "200", description = "Optimization resource", content = @Content(schema = @Schema(implementation = Optimization.class))),
             @ApiResponse(responseCode = "404", description = "Not found", content = @Content(schema = @Schema(implementation = ErrorMessage.class)))})
     @JsonView(Optimization.View.Public.class)
+    @RequiredPermissions(WorkspaceUserPermission.OPTIMIZATION_RUN_VIEW)
     public Response get(@PathParam("id") UUID id) {
         log.info("Getting optimization by id '{}'", id);
         var optimization = optimizationService.getById(id)
@@ -129,13 +148,27 @@ public class OptimizationsResource {
             @ApiResponse(responseCode = "201", description = "Created", headers = {
                     @Header(name = "Location", required = true, example = "${basePath}/v1/private/optimizations/{id}", schema = @Schema(implementation = String.class))})})
     @RateLimited
+    @RequiredPermissions(WorkspaceUserPermission.OPTIMIZATION_STUDIO_USE)
     public Response create(
             @RequestBody(content = @Content(schema = @Schema(implementation = Optimization.class))) @JsonView(Optimization.View.Write.class) @NotNull @Valid Optimization optimization,
             @Context UriInfo uriInfo) {
         var workspaceId = requestContext.get().getWorkspaceId();
         log.info("Creating optimization with id '{}', name '{}', datasetName '{}', workspaceId '{}'",
                 optimization.id(), optimization.name(), optimization.datasetName(), workspaceId);
-        var id = optimizationService.upsert(optimization)
+
+        // For Studio optimizations, inject the API key from the request header
+        var optimizationToCreate = optimization;
+        if (optimization.studioConfig() != null) {
+            var opikApiKey = requestContext.get().getHeaders().getFirst(RequestContext.OPIK_API_KEY);
+            var enrichedConfig = optimization.studioConfig().toBuilder()
+                    .opikApiKey(opikApiKey)
+                    .build();
+            optimizationToCreate = optimization.toBuilder()
+                    .studioConfig(enrichedConfig)
+                    .build();
+        }
+
+        var id = optimizationService.upsert(optimizationToCreate)
                 .contextWrite(ctx -> setRequestContext(ctx, requestContext))
                 .block();
         var uri = uriInfo.getAbsolutePathBuilder().path("/%s".formatted(id)).build();
@@ -149,6 +182,7 @@ public class OptimizationsResource {
     @Path("/delete")
     @Operation(operationId = "deleteOptimizationsById", summary = "Delete optimizations by id", description = "Delete optimizations by id", responses = {
             @ApiResponse(responseCode = "204", description = "No content")})
+    @RequiredPermissions(WorkspaceUserPermission.OPTIMIZATION_RUN_DELETE)
     public Response deleteOptimizationsById(
             @RequestBody(content = @Content(schema = @Schema(implementation = DeleteIdsHolder.class))) @NotNull @Valid DeleteIdsHolder request) {
         log.info("Deleting optimizations, count '{}'", request.ids().size());
@@ -163,8 +197,9 @@ public class OptimizationsResource {
     @Path("/{id}")
     @Operation(operationId = "updateOptimizationsById", summary = "Update optimization by id", description = "Update optimization by id", responses = {
             @ApiResponse(responseCode = "204", description = "No content")})
+    @RequiredPermissions(WorkspaceUserPermission.OPTIMIZATION_STUDIO_USE)
     public Response updateOptimizationsById(@PathParam("id") UUID id,
-            @RequestBody(content = @Content(schema = @Schema(implementation = OptimizationUpdate.class))) @NotNull OptimizationUpdate request) {
+            @RequestBody(content = @Content(schema = @Schema(implementation = OptimizationUpdate.class))) @NotNull @Valid OptimizationUpdate request) {
         log.info("Update optimization with id '{}', with request '{}'", id, request);
 
         optimizationService.update(id, request)
@@ -174,5 +209,25 @@ public class OptimizationsResource {
         log.info("Updates optimization with id '{}'", id);
 
         return Response.noContent().build();
+    }
+
+    // ==================== Studio Endpoints ====================
+
+    @GET
+    @Path("/studio/{id}/logs")
+    @Operation(operationId = "getStudioOptimizationLogs", summary = "Get Studio optimization logs", description = "Get presigned S3 URL for downloading optimization logs", responses = {
+            @ApiResponse(responseCode = "200", description = "Logs response", content = @Content(schema = @Schema(implementation = OptimizationStudioLog.class))),
+            @ApiResponse(responseCode = "404", description = "Not found", content = @Content(schema = @Schema(implementation = ErrorMessage.class)))
+    })
+    @RequiredPermissions(WorkspaceUserPermission.OPTIMIZATION_RUN_VIEW)
+    public Response studioGetLogs(@PathParam("id") UUID id) {
+        log.info("Getting logs for Studio optimization id: '{}'", id);
+
+        var logs = optimizationService.generateStudioLogsResponse(id)
+                .contextWrite(ctx -> setRequestContext(ctx, requestContext))
+                .block();
+
+        log.info("Generated logs URL for Studio optimization id: '{}'", id);
+        return Response.ok(logs).build();
     }
 }

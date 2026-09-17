@@ -19,8 +19,7 @@ export const DEFAULT_OPERATOR_MAP: Record<COLUMN_TYPE, FilterOperator> = {
   [COLUMN_TYPE.numberDictionary]: "=",
   [COLUMN_TYPE.cost]: "<=",
   [COLUMN_TYPE.duration]: "<=",
-  [COLUMN_TYPE.guardrails]: "=",
-  [COLUMN_TYPE.threadStatus]: "=",
+  [COLUMN_TYPE.category]: "=",
   [COLUMN_TYPE.errors]: "is_not_empty",
 };
 
@@ -154,6 +153,18 @@ export const OPERATORS_MAP: Record<
       value: "contains",
     },
     {
+      label: "doesn't contain",
+      value: "not_contains",
+    },
+    {
+      label: "starts with",
+      value: "starts_with",
+    },
+    {
+      label: "ends with",
+      value: "ends_with",
+    },
+    {
       label: ">",
       value: ">",
     },
@@ -192,13 +203,7 @@ export const OPERATORS_MAP: Record<
       value: "is_not_empty",
     },
   ],
-  [COLUMN_TYPE.guardrails]: [
-    {
-      label: "=",
-      value: "=",
-    },
-  ],
-  [COLUMN_TYPE.threadStatus]: [
+  [COLUMN_TYPE.category]: [
     {
       label: "=",
       value: "=",
@@ -215,3 +220,6 @@ export const OPERATORS_MAP: Record<
     },
   ],
 };
+
+export const CUSTOM_FILTER_VALIDATION_REGEXP =
+  /^((\$\.)?input|\$?input\[\d+\]|(\$\.)?output|\$?output\[\d+\])(\.[^.]+)*$/;

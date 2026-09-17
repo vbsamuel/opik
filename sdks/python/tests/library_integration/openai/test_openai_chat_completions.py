@@ -8,6 +8,8 @@ from pydantic import BaseModel
 import opik
 from opik.config import OPIK_PROJECT_DEFAULT_NAME
 from opik.integrations.openai import track_openai
+from opik.types import LLMProvider
+from ... import llm_constants
 from ...testlib import (
     ANY_BUT_NONE,
     ANY_DICT,
@@ -22,7 +24,7 @@ from opik import semantic_version
 
 pytestmark = pytest.mark.usefixtures("ensure_openai_configured")
 
-MODEL_FOR_TESTS = "gpt-4o-mini"
+MODEL_FOR_TESTS = llm_constants.OPENAI_GPT_NANO
 EXPECTED_OPENAI_USAGE_LOGGED_FORMAT = {
     "prompt_tokens": ANY_BUT_NONE,
     "completion_tokens": ANY_BUT_NONE,
@@ -46,7 +48,7 @@ def _assert_metadata_contains_required_keys(metadata: Dict[str, Any]):
     REQUIRED_METADATA_KEYS = [
         "usage",
         "model",
-        "max_tokens",
+        "max_completion_tokens",
         "created_from",
         "type",
         "id",
@@ -79,7 +81,8 @@ def test_openai_client_chat_completions_create__happyflow(
     _ = wrapped_client.chat.completions.create(
         model=MODEL_FOR_TESTS,
         messages=messages,
-        max_tokens=10,
+        max_completion_tokens=10,
+        reasoning_effort=llm_constants.OPENAI_REASONING_EFFORT,
     )
 
     opik.flush_tracker()
@@ -87,7 +90,7 @@ def test_openai_client_chat_completions_create__happyflow(
     EXPECTED_TRACE_TREE = TraceModel(
         id=ANY_BUT_NONE,
         name="chat_completion_create",
-        input={"messages": messages},
+        input=ANY_DICT.containing({"messages": messages}),
         output={"choices": ANY_BUT_NONE},
         tags=["openai"],
         metadata=ANY_DICT,
@@ -100,7 +103,7 @@ def test_openai_client_chat_completions_create__happyflow(
                 id=ANY_BUT_NONE,
                 type="llm",
                 name="chat_completion_create",
-                input={"messages": messages},
+                input=ANY_DICT.containing({"messages": messages}),
                 output={"choices": ANY_BUT_NONE},
                 tags=["openai"],
                 metadata=ANY_DICT,
@@ -111,8 +114,10 @@ def test_openai_client_chat_completions_create__happyflow(
                 spans=[],
                 model=ANY_STRING.starting_with(MODEL_FOR_TESTS),
                 provider="openai",
+                source="sdk",
             )
         ],
+        source="sdk",
     )
 
     assert len(fake_backend.trace_trees) == 1
@@ -122,6 +127,73 @@ def test_openai_client_chat_completions_create__happyflow(
 
     llm_span_metadata = trace_tree.spans[0].metadata
     _assert_metadata_contains_required_keys(llm_span_metadata)
+
+
+@pytest.mark.parametrize(
+    "provider_argument, expected_provider",
+    [
+        ("custom-provider", "custom-provider"),
+        (LLMProvider.ANTHROPIC, "anthropic"),
+    ],
+)
+def test_openai_client_chat_completions_create__custom_provider__provider_logged_on_llm_span_but_usage_still_parsed_as_openai(
+    fake_backend, provider_argument, expected_provider
+):
+    client = openai.OpenAI()
+    wrapped_client = track_openai(
+        openai_client=client,
+        provider=provider_argument,
+    )
+    messages = [
+        {"role": "user", "content": "Tell a fact"},
+    ]
+
+    _ = wrapped_client.chat.completions.create(
+        model=MODEL_FOR_TESTS,
+        messages=messages,
+        max_completion_tokens=10,
+        reasoning_effort=llm_constants.OPENAI_REASONING_EFFORT,
+    )
+
+    opik.flush_tracker()
+
+    EXPECTED_TRACE_TREE = TraceModel(
+        id=ANY_BUT_NONE,
+        name="chat_completion_create",
+        input=ANY_DICT.containing({"messages": messages}),
+        output={"choices": ANY_BUT_NONE},
+        tags=["openai"],
+        metadata=ANY_DICT,
+        start_time=ANY_BUT_NONE,
+        end_time=ANY_BUT_NONE,
+        last_updated_at=ANY_BUT_NONE,
+        project_name=ANY_BUT_NONE,
+        spans=[
+            SpanModel(
+                id=ANY_BUT_NONE,
+                type="llm",
+                name="chat_completion_create",
+                input=ANY_DICT.containing({"messages": messages}),
+                output={"choices": ANY_BUT_NONE},
+                tags=["openai"],
+                metadata=ANY_DICT,
+                # Usage is still parsed with the OpenAI converter even though the
+                # provider label is overridden.
+                usage=EXPECTED_OPENAI_USAGE_LOGGED_FORMAT,
+                start_time=ANY_BUT_NONE,
+                end_time=ANY_BUT_NONE,
+                project_name=ANY_BUT_NONE,
+                spans=[],
+                model=ANY_STRING.starting_with(MODEL_FOR_TESTS),
+                provider=expected_provider,
+                source="sdk",
+            )
+        ],
+        source="sdk",
+    )
+
+    assert len(fake_backend.trace_trees) == 1
+    assert_equal(EXPECTED_TRACE_TREE, fake_backend.trace_trees[0])
 
 
 def test_openai_client_chat_completions_create__create_raises_an_error__span_and_trace_finished_gracefully__error_info_is_logged(
@@ -141,7 +213,7 @@ def test_openai_client_chat_completions_create__create_raises_an_error__span_and
     EXPECTED_TRACE_TREE = TraceModel(
         id=ANY_BUT_NONE,
         name="chat_completion_create",
-        input={"messages": None},
+        input=ANY_DICT.containing({"messages": None}),
         output=None,
         tags=["openai"],
         metadata={
@@ -163,7 +235,7 @@ def test_openai_client_chat_completions_create__create_raises_an_error__span_and
                 id=ANY_BUT_NONE,
                 type="llm",
                 name="chat_completion_create",
-                input={"messages": None},
+                input=ANY_DICT.containing({"messages": None}),
                 output=None,
                 tags=["openai"],
                 metadata={
@@ -183,8 +255,10 @@ def test_openai_client_chat_completions_create__create_raises_an_error__span_and
                     "traceback": ANY_STRING,
                 },
                 spans=[],
+                source="sdk",
             )
         ],
+        source="sdk",
     )
 
     assert len(fake_backend.trace_trees) == 1
@@ -215,7 +289,8 @@ def test_openai_client_chat_completions_create__openai_call_made_in_another_trac
         _ = wrapped_client.chat.completions.create(
             model=MODEL_FOR_TESTS,
             messages=messages,
-            max_tokens=10,
+            max_completion_tokens=10,
+            reasoning_effort=llm_constants.OPENAI_REASONING_EFFORT,
         )
 
     f()
@@ -247,7 +322,7 @@ def test_openai_client_chat_completions_create__openai_call_made_in_another_trac
                         id=ANY_BUT_NONE,
                         type="llm",
                         name="chat_completion_create",
-                        input={"messages": messages},
+                        input=ANY_DICT.containing({"messages": messages}),
                         output={"choices": ANY_BUT_NONE},
                         tags=["openai"],
                         metadata=ANY_DICT,
@@ -258,10 +333,13 @@ def test_openai_client_chat_completions_create__openai_call_made_in_another_trac
                         spans=[],
                         model=ANY_STRING.starting_with(MODEL_FOR_TESTS),
                         provider="openai",
+                        source="sdk",
                     )
                 ],
+                source="sdk",
             )
         ],
+        source="sdk",
     )
 
     assert len(fake_backend.trace_trees) == 1
@@ -289,7 +367,8 @@ def test_openai_client_chat_completions_create__async_openai_call_made_in_anothe
         _ = await wrapped_client.chat.completions.create(
             model=MODEL_FOR_TESTS,
             messages=messages,
-            max_tokens=10,
+            max_completion_tokens=10,
+            reasoning_effort=llm_constants.OPENAI_REASONING_EFFORT,
         )
 
     asyncio.run(async_f())
@@ -321,7 +400,7 @@ def test_openai_client_chat_completions_create__async_openai_call_made_in_anothe
                         id=ANY_BUT_NONE,
                         type="llm",
                         name="chat_completion_create",
-                        input={"messages": messages},
+                        input=ANY_DICT.containing({"messages": messages}),
                         output={"choices": ANY_BUT_NONE},
                         tags=["openai"],
                         metadata=ANY_DICT,
@@ -332,10 +411,13 @@ def test_openai_client_chat_completions_create__async_openai_call_made_in_anothe
                         spans=[],
                         model=ANY_STRING.starting_with(MODEL_FOR_TESTS),
                         provider="openai",
+                        source="sdk",
                     )
                 ],
+                source="sdk",
             )
         ],
+        source="sdk",
     )
 
     assert len(fake_backend.trace_trees) == 1
@@ -360,7 +442,8 @@ def test_openai_client_chat_completions_create__stream_mode_is_on__generator_tra
     stream = wrapped_client.chat.completions.create(
         model=MODEL_FOR_TESTS,
         messages=messages,
-        max_tokens=10,
+        max_completion_tokens=10,
+        reasoning_effort=llm_constants.OPENAI_REASONING_EFFORT,
         stream=True,
         stream_options={"include_usage": True},
     )
@@ -372,8 +455,8 @@ def test_openai_client_chat_completions_create__stream_mode_is_on__generator_tra
 
     EXPECTED_TRACE_TREE = TraceModel(
         id=ANY_BUT_NONE,
-        name="chat_completion_create",
-        input={"messages": messages},
+        name="chat_completion_stream",
+        input=ANY_DICT.containing({"messages": messages}),
         output={"choices": ANY_BUT_NONE},
         tags=["openai"],
         metadata=ANY_DICT,
@@ -385,8 +468,8 @@ def test_openai_client_chat_completions_create__stream_mode_is_on__generator_tra
             SpanModel(
                 id=ANY_BUT_NONE,
                 type="llm",
-                name="chat_completion_create",
-                input={"messages": messages},
+                name="chat_completion_stream",
+                input=ANY_DICT.containing({"messages": messages}),
                 output={"choices": ANY_BUT_NONE},
                 tags=["openai"],
                 metadata=ANY_DICT,
@@ -397,8 +480,10 @@ def test_openai_client_chat_completions_create__stream_mode_is_on__generator_tra
                 spans=[],
                 model=ANY_STRING.starting_with(MODEL_FOR_TESTS),
                 provider="openai",
+                source="sdk",
             )
         ],
+        source="sdk",
     )
 
     assert len(fake_backend.trace_trees) == 1
@@ -425,7 +510,8 @@ def test_openai_client_chat_completions_create__async_openai_call_made_in_anothe
         stream = await wrapped_client.chat.completions.create(
             model=MODEL_FOR_TESTS,
             messages=messages,
-            max_tokens=10,
+            max_completion_tokens=10,
+            reasoning_effort=llm_constants.OPENAI_REASONING_EFFORT,
             stream=True,
             stream_options={"include_usage": True},
         )
@@ -460,8 +546,8 @@ def test_openai_client_chat_completions_create__async_openai_call_made_in_anothe
                     SpanModel(
                         id=ANY_BUT_NONE,
                         type="llm",
-                        name="chat_completion_create",
-                        input={"messages": messages},
+                        name="chat_completion_stream",
+                        input=ANY_DICT.containing({"messages": messages}),
                         output={"choices": ANY_BUT_NONE},
                         tags=["openai"],
                         metadata=ANY_DICT,
@@ -472,10 +558,13 @@ def test_openai_client_chat_completions_create__async_openai_call_made_in_anothe
                         spans=[],
                         model=ANY_STRING.starting_with(MODEL_FOR_TESTS),
                         provider="openai",
+                        source="sdk",
                     )
                 ],
+                source="sdk",
             )
         ],
+        source="sdk",
     )
 
     assert len(fake_backend.trace_trees) == 1
@@ -515,9 +604,10 @@ def test_openai_client_chat_completions_parse__happyflow(
     ]
 
     _ = wrapped_client.chat.completions.parse(
-        model="gpt-4o",
+        model=llm_constants.OPENAI_GPT_NANO,
         messages=messages,
-        max_tokens=100,
+        max_completion_tokens=512,
+        reasoning_effort=llm_constants.OPENAI_REASONING_EFFORT,
         response_format=CalendarEvent,
     )
 
@@ -526,7 +616,7 @@ def test_openai_client_chat_completions_parse__happyflow(
     EXPECTED_TRACE_TREE = TraceModel(
         id=ANY_BUT_NONE,
         name="chat_completion_parse",
-        input={"messages": messages},
+        input=ANY_DICT.containing({"messages": messages}),
         output={"choices": ANY_BUT_NONE},
         tags=["openai"],
         metadata=ANY_DICT,
@@ -539,7 +629,7 @@ def test_openai_client_chat_completions_parse__happyflow(
                 id=ANY_BUT_NONE,
                 type="llm",
                 name="chat_completion_parse",
-                input={"messages": messages},
+                input=ANY_DICT.containing({"messages": messages}),
                 output={"choices": ANY_BUT_NONE},
                 tags=["openai"],
                 metadata=ANY_DICT,
@@ -548,10 +638,12 @@ def test_openai_client_chat_completions_parse__happyflow(
                 end_time=ANY_BUT_NONE,
                 project_name=expected_project_name,
                 spans=[],
-                model=ANY_STRING.starting_with("gpt-4o"),
+                model=ANY_STRING.starting_with(llm_constants.OPENAI_GPT_NANO),
                 provider="openai",
+                source="sdk",
             )
         ],
+        source="sdk",
     )
 
     assert len(fake_backend.trace_trees) == 1
@@ -583,10 +675,11 @@ def test_async_openai_client_chat_completions_parse__happyflow(fake_backend):
 
     asyncio.run(
         wrapped_client.chat.completions.parse(
-            model="gpt-4o",
+            model=llm_constants.OPENAI_GPT_NANO,
             messages=messages,
             response_format=CalendarEvent,
-            max_tokens=100,
+            max_completion_tokens=512,
+            reasoning_effort=llm_constants.OPENAI_REASONING_EFFORT,
         )
     )
 
@@ -595,7 +688,7 @@ def test_async_openai_client_chat_completions_parse__happyflow(fake_backend):
     EXPECTED_TRACE_TREE = TraceModel(
         id=ANY_BUT_NONE,
         name="chat_completion_parse",
-        input={"messages": messages},
+        input=ANY_DICT.containing({"messages": messages}),
         output={"choices": ANY_BUT_NONE},
         tags=["openai"],
         metadata=ANY_DICT,
@@ -607,7 +700,7 @@ def test_async_openai_client_chat_completions_parse__happyflow(fake_backend):
                 id=ANY_BUT_NONE,
                 type="llm",
                 name="chat_completion_parse",
-                input={"messages": messages},
+                input=ANY_DICT.containing({"messages": messages}),
                 output={"choices": ANY_BUT_NONE},
                 tags=["openai"],
                 metadata=ANY_DICT,
@@ -615,10 +708,12 @@ def test_async_openai_client_chat_completions_parse__happyflow(fake_backend):
                 start_time=ANY_BUT_NONE,
                 end_time=ANY_BUT_NONE,
                 spans=[],
-                model=ANY_STRING.starting_with("gpt-4o"),
+                model=ANY_STRING.starting_with(llm_constants.OPENAI_GPT_NANO),
                 provider="openai",
+                source="sdk",
             )
         ],
+        source="sdk",
     )
 
     assert len(fake_backend.trace_trees) == 1
@@ -650,7 +745,8 @@ def test_openai_chat_completion_stream__generator_tracked_correctly(
     chat_completion_stream_manager = wrapped_client.chat.completions.stream(
         model=MODEL_FOR_TESTS,
         messages=messages,
-        max_tokens=10,
+        max_completion_tokens=10,
+        reasoning_effort=llm_constants.OPENAI_REASONING_EFFORT,
         stream_options={"include_usage": True},
     )
     with chat_completion_stream_manager as stream:
@@ -662,7 +758,7 @@ def test_openai_chat_completion_stream__generator_tracked_correctly(
     EXPECTED_TRACE_TREE = TraceModel(
         id=ANY_BUT_NONE,
         name="chat_completion_stream",
-        input={"messages": messages},
+        input=ANY_DICT.containing({"messages": messages}),
         output={"choices": ANY_BUT_NONE},
         tags=["openai"],
         metadata=ANY_DICT,
@@ -674,7 +770,7 @@ def test_openai_chat_completion_stream__generator_tracked_correctly(
                 id=ANY_BUT_NONE,
                 type="llm",
                 name="chat_completion_stream",
-                input={"messages": messages},
+                input=ANY_DICT.containing({"messages": messages}),
                 output={"choices": ANY_BUT_NONE},
                 tags=["openai"],
                 metadata=ANY_DICT,
@@ -684,8 +780,10 @@ def test_openai_chat_completion_stream__generator_tracked_correctly(
                 spans=[],
                 model=ANY_STRING.starting_with(MODEL_FOR_TESTS),
                 provider="openai",
+                source="sdk",
             )
         ],
+        source="sdk",
     )
 
     assert len(fake_backend.trace_trees) == 1
@@ -716,7 +814,8 @@ def test_openai_chat_completion_stream__include_usage_is_not_enabled__usage_not_
     chat_completion_stream_manager = wrapped_client.chat.completions.stream(
         model=MODEL_FOR_TESTS,
         messages=messages,
-        max_tokens=10,
+        max_completion_tokens=10,
+        reasoning_effort=llm_constants.OPENAI_REASONING_EFFORT,
     )
     with chat_completion_stream_manager as stream:
         for _ in stream:
@@ -727,7 +826,7 @@ def test_openai_chat_completion_stream__include_usage_is_not_enabled__usage_not_
     EXPECTED_TRACE_TREE = TraceModel(
         id=ANY_BUT_NONE,
         name="chat_completion_stream",
-        input={"messages": messages},
+        input=ANY_DICT.containing({"messages": messages}),
         output={"choices": ANY_BUT_NONE},
         tags=["openai"],
         metadata=ANY_DICT,
@@ -739,7 +838,7 @@ def test_openai_chat_completion_stream__include_usage_is_not_enabled__usage_not_
                 id=ANY_BUT_NONE,
                 type="llm",
                 name="chat_completion_stream",
-                input={"messages": messages},
+                input=ANY_DICT.containing({"messages": messages}),
                 output={"choices": ANY_BUT_NONE},
                 tags=["openai"],
                 metadata=ANY_DICT,
@@ -749,8 +848,10 @@ def test_openai_chat_completion_stream__include_usage_is_not_enabled__usage_not_
                 spans=[],
                 model=ANY_STRING.starting_with(MODEL_FOR_TESTS),
                 provider="openai",
+                source="sdk",
             )
         ],
+        source="sdk",
     )
 
     assert len(fake_backend.trace_trees) == 1
@@ -769,7 +870,8 @@ def test_openai_chat_completion_stream__stream_called_2_times__generator_tracked
         chat_completion_stream_manager = wrapped_client.chat.completions.stream(
             model=MODEL_FOR_TESTS,
             messages=messages,
-            max_tokens=10,
+            max_completion_tokens=10,
+            reasoning_effort=llm_constants.OPENAI_REASONING_EFFORT,
             stream_options={"include_usage": True},
         )
         with chat_completion_stream_manager as stream:
@@ -799,7 +901,7 @@ def test_openai_chat_completion_stream__stream_called_2_times__generator_tracked
     EXPECTED_TRACE_TREE_WITH_SHORT_FACT = TraceModel(
         id=ANY_BUT_NONE,
         name="chat_completion_stream",
-        input={"messages": SHORT_FACT_MESSAGES},
+        input=ANY_DICT.containing({"messages": SHORT_FACT_MESSAGES}),
         output={"choices": ANY_BUT_NONE},
         tags=["openai"],
         metadata=ANY_DICT,
@@ -811,7 +913,7 @@ def test_openai_chat_completion_stream__stream_called_2_times__generator_tracked
                 id=ANY_BUT_NONE,
                 type="llm",
                 name="chat_completion_stream",
-                input={"messages": SHORT_FACT_MESSAGES},
+                input=ANY_DICT.containing({"messages": SHORT_FACT_MESSAGES}),
                 output={"choices": ANY_BUT_NONE},
                 tags=["openai"],
                 metadata=ANY_DICT,
@@ -821,13 +923,15 @@ def test_openai_chat_completion_stream__stream_called_2_times__generator_tracked
                 spans=[],
                 model=ANY_STRING.starting_with(MODEL_FOR_TESTS),
                 provider="openai",
+                source="sdk",
             )
         ],
+        source="sdk",
     )
     EXPECTED_TRACE_TREE_WITH_JOKE = TraceModel(
         id=ANY_BUT_NONE,
         name="chat_completion_stream",
-        input={"messages": JOKE_MESSAGES},
+        input=ANY_DICT.containing({"messages": JOKE_MESSAGES}),
         output={"choices": ANY_BUT_NONE},
         tags=["openai"],
         metadata=ANY_DICT,
@@ -839,7 +943,7 @@ def test_openai_chat_completion_stream__stream_called_2_times__generator_tracked
                 id=ANY_BUT_NONE,
                 type="llm",
                 name="chat_completion_stream",
-                input={"messages": JOKE_MESSAGES},
+                input=ANY_DICT.containing({"messages": JOKE_MESSAGES}),
                 output={"choices": ANY_BUT_NONE},
                 tags=["openai"],
                 metadata=ANY_DICT,
@@ -849,8 +953,10 @@ def test_openai_chat_completion_stream__stream_called_2_times__generator_tracked
                 spans=[],
                 model=ANY_STRING.starting_with(MODEL_FOR_TESTS),
                 provider="openai",
+                source="sdk",
             )
         ],
+        source="sdk",
     )
 
     assert len(fake_backend.trace_trees) == 2
@@ -885,7 +991,8 @@ def test_openai_chat_completion_stream__get_final_completion_called__generator_t
     chat_completion_stream_manager = wrapped_client.chat.completions.stream(
         model=MODEL_FOR_TESTS,
         messages=messages,
-        max_tokens=200,  # increased max tokens because get_final_completion() fails on low ones
+        max_completion_tokens=512,
+        reasoning_effort=llm_constants.OPENAI_REASONING_EFFORT,
         stream_options={"include_usage": True},
     )
     with chat_completion_stream_manager as stream:
@@ -896,7 +1003,7 @@ def test_openai_chat_completion_stream__get_final_completion_called__generator_t
     EXPECTED_TRACE_TREE = TraceModel(
         id=ANY_BUT_NONE,
         name="chat_completion_stream",
-        input={"messages": messages},
+        input=ANY_DICT.containing({"messages": messages}),
         output={"choices": ANY_LIST},
         tags=["openai"],
         metadata=ANY_DICT,
@@ -907,7 +1014,7 @@ def test_openai_chat_completion_stream__get_final_completion_called__generator_t
             SpanModel(
                 id=ANY_BUT_NONE,
                 name="chat_completion_stream",
-                input={"messages": messages},
+                input=ANY_DICT.containing({"messages": messages}),
                 output={"choices": ANY_LIST},
                 tags=["openai"],
                 metadata=ANY_DICT,
@@ -918,8 +1025,10 @@ def test_openai_chat_completion_stream__get_final_completion_called__generator_t
                 spans=[],
                 model=ANY_STRING.starting_with(MODEL_FOR_TESTS),
                 provider="openai",
+                source="sdk",
             )
         ],
+        source="sdk",
     )
 
     assert len(fake_backend.trace_trees) == 1
@@ -949,7 +1058,8 @@ def test_openai_chat_completion_stream__get_final_completion_called_after_stream
     chat_completion_stream_manager = wrapped_client.chat.completions.stream(
         model=MODEL_FOR_TESTS,
         messages=messages,
-        max_tokens=200,  # increased max tokens because get_final_completion() fails on low ones
+        max_completion_tokens=512,
+        reasoning_effort=llm_constants.OPENAI_REASONING_EFFORT,
         stream_options={"include_usage": True},
     )
     with chat_completion_stream_manager as stream:
@@ -962,7 +1072,7 @@ def test_openai_chat_completion_stream__get_final_completion_called_after_stream
     EXPECTED_TRACE_TREE = TraceModel(
         id=ANY_BUT_NONE,
         name="chat_completion_stream",
-        input={"messages": messages},
+        input=ANY_DICT.containing({"messages": messages}),
         output={"choices": ANY_LIST},
         tags=["openai"],
         metadata=ANY_DICT,
@@ -973,7 +1083,7 @@ def test_openai_chat_completion_stream__get_final_completion_called_after_stream
             SpanModel(
                 id=ANY_BUT_NONE,
                 name="chat_completion_stream",
-                input={"messages": messages},
+                input=ANY_DICT.containing({"messages": messages}),
                 output={"choices": ANY_LIST},
                 tags=["openai"],
                 metadata=ANY_DICT,
@@ -984,8 +1094,10 @@ def test_openai_chat_completion_stream__get_final_completion_called_after_stream
                 spans=[],
                 model=ANY_STRING.starting_with(MODEL_FOR_TESTS),
                 provider="openai",
+                source="sdk",
             )
         ],
+        source="sdk",
     )
 
     assert len(fake_backend.trace_trees) == 1
@@ -1016,7 +1128,8 @@ def test_async_openai_chat_completion_stream__data_tracked_correctly(
         chat_completion_stream_manager = wrapped_client.chat.completions.stream(
             model=MODEL_FOR_TESTS,
             messages=messages,
-            max_tokens=10,
+            max_completion_tokens=10,
+            reasoning_effort=llm_constants.OPENAI_REASONING_EFFORT,
             stream_options={"include_usage": True},
         )
         async with chat_completion_stream_manager as stream:
@@ -1030,7 +1143,7 @@ def test_async_openai_chat_completion_stream__data_tracked_correctly(
     EXPECTED_TRACE_TREE = TraceModel(
         id=ANY_BUT_NONE,
         name="chat_completion_stream",
-        input={"messages": messages},
+        input=ANY_DICT.containing({"messages": messages}),
         output={"choices": ANY_LIST},
         tags=["openai"],
         metadata=ANY_DICT,
@@ -1041,7 +1154,7 @@ def test_async_openai_chat_completion_stream__data_tracked_correctly(
             SpanModel(
                 id=ANY_BUT_NONE,
                 name="chat_completion_stream",
-                input={"messages": messages},
+                input=ANY_DICT.containing({"messages": messages}),
                 output={"choices": ANY_LIST},
                 tags=["openai"],
                 metadata=ANY_DICT,
@@ -1052,8 +1165,10 @@ def test_async_openai_chat_completion_stream__data_tracked_correctly(
                 spans=[],
                 model=ANY_STRING.starting_with(MODEL_FOR_TESTS),
                 provider="openai",
+                source="sdk",
             )
         ],
+        source="sdk",
     )
 
     assert len(fake_backend.trace_trees) == 1
@@ -1084,7 +1199,7 @@ def test_async_openai_chat_completion_stream__get_final_completion_called_twice_
     #     chat_completion_stream_manager = wrapped_client.chat.completions.stream(
     #         model=MODEL_FOR_TESTS,
     #         messages=messages,
-    #         max_tokens=10,
+    #         max_completion_tokens=10,
     #         stream_options={"include_usage": True},
     #     )
     #     async with chat_completion_stream_manager as stream:
@@ -1097,7 +1212,8 @@ def test_async_openai_chat_completion_stream__get_final_completion_called_twice_
         chat_completion_stream_manager = wrapped_client.chat.completions.stream(
             model=MODEL_FOR_TESTS,
             messages=messages,
-            max_tokens=200,  # increased max tokens because get_final_completion() fails on low ones
+            max_completion_tokens=512,
+            reasoning_effort=llm_constants.OPENAI_REASONING_EFFORT,
             stream_options={"include_usage": True},
         )
         async with chat_completion_stream_manager as stream:
@@ -1111,7 +1227,7 @@ def test_async_openai_chat_completion_stream__get_final_completion_called_twice_
     EXPECTED_TRACE_TREE = TraceModel(
         id=ANY_BUT_NONE,
         name="chat_completion_stream",
-        input={"messages": messages},
+        input=ANY_DICT.containing({"messages": messages}),
         output={"choices": ANY_LIST},
         tags=["openai"],
         metadata=ANY_DICT,
@@ -1122,7 +1238,7 @@ def test_async_openai_chat_completion_stream__get_final_completion_called_twice_
             SpanModel(
                 id=ANY_BUT_NONE,
                 name="chat_completion_stream",
-                input={"messages": messages},
+                input=ANY_DICT.containing({"messages": messages}),
                 output={"choices": ANY_LIST},
                 tags=["openai"],
                 metadata=ANY_DICT,
@@ -1133,12 +1249,97 @@ def test_async_openai_chat_completion_stream__get_final_completion_called_twice_
                 spans=[],
                 model=ANY_STRING.starting_with(MODEL_FOR_TESTS),
                 provider="openai",
+                source="sdk",
             )
         ],
+        source="sdk",
     )
 
     assert len(fake_backend.trace_trees) == 1
 
     assert_equal(EXPECTED_TRACE_TREE, fake_backend.trace_trees[0])
     llm_span_metadata = fake_backend.trace_trees[0].spans[0].metadata
+    _assert_metadata_contains_required_keys(llm_span_metadata)
+
+
+@pytest.mark.parametrize(
+    "project_name, expected_project_name",
+    [
+        (None, OPIK_PROJECT_DEFAULT_NAME),
+        ("openai-integration-test", "openai-integration-test"),
+    ],
+)
+def test_openai_client_chat_completions_create__opik_args__happyflow(
+    fake_backend, project_name, expected_project_name
+):
+    # test that opik_args are passed to the logged traces and spans
+    client = openai.OpenAI()
+    wrapped_client = track_openai(
+        openai_client=client,
+        project_name=project_name,
+    )
+    messages = [
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "Tell a fact"},
+    ]
+
+    args_dict = {
+        "span": {"tags": ["span_tag"], "metadata": {"span_key": "span_value"}},
+        "trace": {
+            "thread_id": "conversation-2",
+            "tags": ["trace_tag"],
+            "metadata": {"trace_key": "trace_value"},
+        },
+    }
+
+    _ = wrapped_client.chat.completions.create(
+        model=MODEL_FOR_TESTS,
+        messages=messages,
+        max_completion_tokens=10,
+        reasoning_effort=llm_constants.OPENAI_REASONING_EFFORT,
+        opik_args=args_dict,
+    )
+
+    opik.flush_tracker()
+
+    EXPECTED_TRACE_TREE = TraceModel(
+        id=ANY_BUT_NONE,
+        name="chat_completion_create",
+        input=ANY_DICT.containing({"messages": messages}),
+        output={"choices": ANY_BUT_NONE},
+        tags=["openai", "span_tag", "trace_tag"],
+        metadata=ANY_DICT.containing({"trace_key": "trace_value"}),
+        start_time=ANY_BUT_NONE,
+        end_time=ANY_BUT_NONE,
+        last_updated_at=ANY_BUT_NONE,
+        project_name=expected_project_name,
+        thread_id="conversation-2",
+        spans=[
+            SpanModel(
+                id=ANY_BUT_NONE,
+                type="llm",
+                name="chat_completion_create",
+                input=ANY_DICT.containing({"messages": messages}),
+                output={"choices": ANY_BUT_NONE},
+                tags=["openai", "span_tag"],
+                metadata=ANY_DICT.containing({"span_key": "span_value"}),
+                usage=EXPECTED_OPENAI_USAGE_LOGGED_FORMAT,
+                start_time=ANY_BUT_NONE,
+                end_time=ANY_BUT_NONE,
+                project_name=expected_project_name,
+                spans=[],
+                model=ANY_STRING.starting_with(MODEL_FOR_TESTS),
+                provider="openai",
+                source="sdk",
+            )
+        ],
+        source="sdk",
+    )
+
+    assert len(fake_backend.trace_trees) == 1
+    trace_tree = fake_backend.trace_trees[0]
+
+    assert_equal(EXPECTED_TRACE_TREE, trace_tree)
+
+    llm_span_metadata = trace_tree.spans[0].metadata
     _assert_metadata_contains_required_keys(llm_span_metadata)

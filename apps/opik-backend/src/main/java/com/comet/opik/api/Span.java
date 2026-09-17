@@ -13,6 +13,8 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.PositiveOrZero;
+import jakarta.validation.constraints.Size;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
@@ -30,7 +32,7 @@ import static com.comet.opik.utils.ValidationUtils.NULL_OR_NOT_BLANK;
 @JsonIgnoreProperties(ignoreUnknown = true)
 @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
 public record Span(
-        @JsonView( {
+        @JsonView({
                 Span.View.Public.class, Span.View.Write.class,
                 ExperimentItemBulkUpload.View.ExperimentItemBulkWriteView.class}) UUID id,
         @JsonView({
@@ -54,7 +56,7 @@ public record Span(
         @Schema(implementation = JsonListString.class) @JsonView({Span.View.Public.class,
                 Span.View.Write.class,
                 ExperimentItemBulkUpload.View.ExperimentItemBulkWriteView.class}) JsonNode output,
-        @JsonView({Span.View.Public.class, Span.View.Write.class,
+        @Schema(implementation = JsonListString.class) @JsonView({Span.View.Public.class, Span.View.Write.class,
                 ExperimentItemBulkUpload.View.ExperimentItemBulkWriteView.class}) JsonNode metadata,
         @JsonView({Span.View.Public.class, Span.View.Write.class,
                 ExperimentItemBulkUpload.View.ExperimentItemBulkWriteView.class}) String model,
@@ -78,7 +80,13 @@ public record Span(
                 ExperimentItemBulkUpload.View.ExperimentItemBulkWriteView.class}) @DecimalMin("0.0") BigDecimal totalEstimatedCost,
         String totalEstimatedCostVersion,
         @JsonView({
-                Span.View.Public.class}) @Schema(accessMode = Schema.AccessMode.READ_ONLY, description = "Duration in milliseconds as a decimal number to support sub-millisecond precision") Double duration){
+                Span.View.Public.class}) @Schema(accessMode = Schema.AccessMode.READ_ONLY, description = "Duration in milliseconds as a decimal number to support sub-millisecond precision") Double duration,
+        @JsonView({Span.View.Public.class, Span.View.Write.class,
+                ExperimentItemBulkUpload.View.ExperimentItemBulkWriteView.class}) @Schema(description = "Time to first token in milliseconds") @PositiveOrZero Double ttft,
+        @JsonView({Span.View.Public.class, Span.View.Write.class,
+                ExperimentItemBulkUpload.View.ExperimentItemBulkWriteView.class}) Source source,
+        @JsonView({Span.View.Public.class, Span.View.Write.class,
+                ExperimentItemBulkUpload.View.ExperimentItemBulkWriteView.class}) @Size(max = 150, message = "cannot exceed 150 characters") String environment) {
 
     @Builder(toBuilder = true)
     public record SpanPage(
@@ -115,7 +123,10 @@ public record Span(
         COMMENTS("comments"),
         TOTAL_ESTIMATED_COST("total_estimated_cost"),
         TOTAL_ESTIMATED_COST_VERSION("total_estimated_cost_version"),
-        DURATION("duration");
+        DURATION("duration"),
+        TTFT("ttft"),
+        SOURCE("source"),
+        ENVIRONMENT("environment");
 
         @JsonValue
         private final String value;

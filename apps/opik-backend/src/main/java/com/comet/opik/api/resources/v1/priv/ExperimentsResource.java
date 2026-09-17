@@ -3,6 +3,12 @@ package com.comet.opik.api.resources.v1.priv;
 import com.codahale.metrics.annotation.Timed;
 import com.comet.opik.api.DeleteIdsHolder;
 import com.comet.opik.api.Experiment;
+import com.comet.opik.api.ExperimentBatchUpdate;
+import com.comet.opik.api.ExperimentExecutionRequest;
+import com.comet.opik.api.ExperimentExecutionResponse;
+import com.comet.opik.api.ExperimentGroupAggregationsResponse;
+import com.comet.opik.api.ExperimentGroupCriteria;
+import com.comet.opik.api.ExperimentGroupResponse;
 import com.comet.opik.api.ExperimentItem;
 import com.comet.opik.api.ExperimentItemBulkRecord;
 import com.comet.opik.api.ExperimentItemBulkUpload;
@@ -12,28 +18,35 @@ import com.comet.opik.api.ExperimentItemsDelete;
 import com.comet.opik.api.ExperimentSearchCriteria;
 import com.comet.opik.api.ExperimentStreamRequest;
 import com.comet.opik.api.ExperimentType;
+import com.comet.opik.api.ExperimentUpdate;
 import com.comet.opik.api.FeedbackDefinition;
 import com.comet.opik.api.FeedbackScoreNames;
+import com.comet.opik.api.IdsHolder;
 import com.comet.opik.api.filter.ExperimentFilter;
 import com.comet.opik.api.filter.FiltersFactory;
+import com.comet.opik.api.grouping.ExperimentGroupingFactory;
+import com.comet.opik.api.grouping.GroupBy;
 import com.comet.opik.api.resources.v1.priv.validate.ExperimentItemBulkValidator;
 import com.comet.opik.api.resources.v1.priv.validate.ParamsValidator;
 import com.comet.opik.api.sorting.ExperimentSortingFactory;
 import com.comet.opik.api.sorting.SortingField;
 import com.comet.opik.domain.EntityType;
+import com.comet.opik.domain.ExperimentExecutionService;
 import com.comet.opik.domain.ExperimentItemBulkIngestionService;
 import com.comet.opik.domain.ExperimentItemSearchCriteria;
 import com.comet.opik.domain.ExperimentItemService;
 import com.comet.opik.domain.ExperimentService;
 import com.comet.opik.domain.FeedbackScoreService;
 import com.comet.opik.domain.IdGenerator;
+import com.comet.opik.domain.ProjectService;
 import com.comet.opik.domain.Streamer;
-import com.comet.opik.domain.workspaces.WorkspaceMetadata;
 import com.comet.opik.domain.workspaces.WorkspaceMetadataService;
 import com.comet.opik.infrastructure.auth.RequestContext;
+import com.comet.opik.infrastructure.auth.RequiredPermissions;
+import com.comet.opik.infrastructure.auth.WorkspaceUserPermission;
 import com.comet.opik.infrastructure.ratelimit.RateLimited;
 import com.comet.opik.infrastructure.usagelimit.UsageLimited;
-import com.comet.opik.utils.AsyncUtils;
+import com.comet.opik.utils.RetryUtils;
 import com.fasterxml.jackson.annotation.JsonView;
 import com.fasterxml.jackson.databind.JsonNode;
 import io.dropwizard.jersey.errors.ErrorMessage;
@@ -53,6 +66,7 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.DefaultValue;
 import jakarta.ws.rs.GET;
+import jakarta.ws.rs.PATCH;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.PUT;
 import jakarta.ws.rs.Path;
@@ -96,12 +110,15 @@ public class ExperimentsResource {
     private final @NonNull WorkspaceMetadataService workspaceMetadataService;
     private final @NonNull ExperimentItemBulkIngestionService experimentItemBulkIngestionService;
     private final @NonNull FiltersFactory filtersFactory;
+    private final @NonNull ExperimentGroupingFactory groupingFactory;
+    private final @NonNull ExperimentExecutionService experimentExecutionService;
 
     @GET
     @Operation(operationId = "findExperiments", summary = "Find experiments", description = "Find experiments", responses = {
             @ApiResponse(responseCode = "200", description = "Experiments resource", content = @Content(schema = @Schema(implementation = Experiment.ExperimentPage.class))),
             @ApiResponse(responseCode = "400", description = "Bad Request", content = @Content(schema = @Schema(implementation = ErrorMessage.class)))
     })
+    @RequiredPermissions(WorkspaceUserPermission.EXPERIMENT_VIEW)
     @JsonView(Experiment.View.Public.class)
     public Response find(
             @QueryParam("page") @Min(1) @DefaultValue("1") int page,
@@ -109,20 +126,22 @@ public class ExperimentsResource {
             @QueryParam("datasetId") UUID datasetId,
             @QueryParam("optimization_id") UUID optimizationId,
             @QueryParam("types") String typesQueryParam,
-            @QueryParam("name") String name,
+            @QueryParam("name") @Schema(description = "Filter experiments by name (partial match, case insensitive)") String name,
             @QueryParam("dataset_deleted") boolean datasetDeleted,
             @QueryParam("prompt_id") UUID promptId,
+            @QueryParam("project_id") UUID projectId,
+            @QueryParam("project_deleted") boolean projectDeleted,
             @QueryParam("sorting") String sorting,
-            @QueryParam("filters") String filters) {
+            @QueryParam("filters") String filters,
+            @QueryParam("experiment_ids") @Schema(description = "Filter experiments by a list of experiment IDs") String experimentIds,
+            @QueryParam("force_sorting") @DefaultValue("false") @Schema(description = "Force sorting even when exceeding the endpoint result set limit. May result in slower queries") boolean forceSorting) {
 
         List<SortingField> sortingFields = sortingFactory.newSorting(sorting);
 
-        WorkspaceMetadata metadata = workspaceMetadataService
-                .getWorkspaceMetadata(requestContext.get().getWorkspaceId())
-                .contextWrite(ctx -> setRequestContext(ctx, requestContext))
+        var metadata = workspaceMetadataService.getExperimentMetadata(
+                requestContext.get().getWorkspaceId(), datasetId)
                 .block();
-
-        if (!sortingFields.isEmpty() && !metadata.canUseDynamicSorting()) {
+        if (!forceSorting && !sortingFields.isEmpty() && metadata.cannotUseDynamicSorting()) {
             sortingFields = List.of();
         }
 
@@ -132,22 +151,30 @@ public class ExperimentsResource {
                 .map(queryParam -> ParamsValidator.get(queryParam, ExperimentType.class, "types"))
                 .orElse(null);
 
+        var experimentIdsParsed = Optional.ofNullable(experimentIds)
+                .filter(param -> !param.isBlank())
+                .map(ParamsValidator::getIds)
+                .orElse(null);
+
         var experimentSearchCriteria = ExperimentSearchCriteria.builder()
                 .datasetId(datasetId)
                 .name(name)
                 .entityType(EntityType.TRACE)
                 .datasetDeleted(datasetDeleted)
                 .promptId(promptId)
+                .projectId(projectId)
+                .projectDeleted(projectDeleted)
                 .sortingFields(sortingFields)
                 .optimizationId(optimizationId)
                 .types(types)
                 .filters(experimentFilters)
+                .experimentIds(experimentIdsParsed)
                 .build();
 
         log.info("Finding experiments by '{}', page '{}', size '{}'", experimentSearchCriteria, page, size);
         var experiments = experimentService.find(page, size, experimentSearchCriteria)
                 .map(experimentPage -> {
-                    if (!metadata.canUseDynamicSorting()) {
+                    if (!forceSorting && metadata.cannotUseDynamicSorting()) {
                         return experimentPage.toBuilder().sortableBy(List.of()).build();
                     }
                     return experimentPage;
@@ -156,7 +183,93 @@ public class ExperimentsResource {
                 .block();
         log.info("Found experiments by '{}', count '{}', page '{}', size '{}'",
                 experimentSearchCriteria, experiments.size(), page, size);
+
         return Response.ok().entity(experiments).build();
+    }
+
+    @GET
+    @Path("/groups")
+    @Operation(operationId = "findExperimentGroups", summary = "Find experiment groups", description = "Find experiments grouped by specified fields", responses = {
+            @ApiResponse(responseCode = "200", description = "Experiment groups", content = @Content(schema = @Schema(implementation = ExperimentGroupResponse.class))),
+            @ApiResponse(responseCode = "400", description = "Bad Request", content = @Content(schema = @Schema(implementation = ErrorMessage.class)))
+    })
+    public Response findGroups(
+            @QueryParam("groups") String groupsQueryParam,
+            @QueryParam("types") String typesQueryParam,
+            @QueryParam("name") @Schema(description = "Filter experiments by name (partial match, case insensitive)") String name,
+            @QueryParam("project_id") UUID projectId,
+            @QueryParam("project_deleted") Boolean projectDeleted,
+            @QueryParam("filters") String filters) {
+
+        // Parse and validate groups parameter using GroupingFactory
+        List<GroupBy> groups = groupingFactory.newGrouping(groupsQueryParam);
+
+        // Parse optional parameters
+        var types = Optional.ofNullable(typesQueryParam)
+                .map(queryParam -> ParamsValidator.get(queryParam, ExperimentType.class, "types"))
+                .orElse(null);
+
+        var experimentFilters = filtersFactory.newFilters(filters, ExperimentFilter.LIST_TYPE_REFERENCE);
+
+        var experimentGroupCriteria = ExperimentGroupCriteria.builder()
+                .groups(groups)
+                .name(name)
+                .types(types)
+                .filters(experimentFilters)
+                .projectId(projectId)
+                .projectDeleted(projectDeleted)
+                .build();
+
+        log.info("Finding experiment groups by criteria '{}'", experimentGroupCriteria);
+        var groupResponse = experimentService.findGroups(experimentGroupCriteria)
+                .contextWrite(ctx -> setRequestContext(ctx, requestContext))
+                .block();
+        log.info("Found experiment groups, total top-level groups: {}", groupResponse.content().size());
+
+        return Response.ok().entity(groupResponse).build();
+    }
+
+    @GET
+    @Path("/groups/aggregations")
+    @Operation(operationId = "findExperimentGroupsAggregations", summary = "Find experiment groups with aggregations", description = "Find experiments grouped by specified fields with aggregation metrics", responses = {
+            @ApiResponse(responseCode = "200", description = "Experiment groups with aggregations", content = @Content(schema = @Schema(implementation = ExperimentGroupAggregationsResponse.class))),
+            @ApiResponse(responseCode = "400", description = "Bad Request", content = @Content(schema = @Schema(implementation = ErrorMessage.class)))
+    })
+    public Response findGroupsAggregations(
+            @QueryParam("groups") String groupsQueryParam,
+            @QueryParam("types") String typesQueryParam,
+            @QueryParam("name") @Schema(description = "Filter experiments by name (partial match, case insensitive)") String name,
+            @QueryParam("project_id") UUID projectId,
+            @QueryParam("project_deleted") @Schema(description = "Filter experiments by deleted projects") Boolean projectDeleted,
+            @QueryParam("filters") String filters) {
+
+        // Parse and validate groups parameter using GroupingFactory
+        List<GroupBy> groups = groupingFactory.newGrouping(groupsQueryParam);
+
+        // Parse optional parameters
+        var types = Optional.ofNullable(typesQueryParam)
+                .map(queryParam -> ParamsValidator.get(queryParam, ExperimentType.class, "types"))
+                .orElse(null);
+
+        var experimentFilters = filtersFactory.newFilters(filters, ExperimentFilter.LIST_TYPE_REFERENCE);
+
+        var experimentGroupCriteria = ExperimentGroupCriteria.builder()
+                .groups(groups)
+                .name(name)
+                .types(types)
+                .filters(experimentFilters)
+                .projectId(projectId)
+                .projectDeleted(projectDeleted)
+                .build();
+
+        log.info("Finding experiment groups aggregations by criteria '{}'", experimentGroupCriteria);
+        var groupAggregationsResponse = experimentService.findGroupsAggregations(experimentGroupCriteria)
+                .contextWrite(ctx -> setRequestContext(ctx, requestContext))
+                .block();
+        log.info("Found experiment groups aggregations, total top-level groups: {}",
+                groupAggregationsResponse.content().size());
+
+        return Response.ok().entity(groupAggregationsResponse).build();
     }
 
     @GET
@@ -164,6 +277,7 @@ public class ExperimentsResource {
     @Operation(operationId = "getExperimentById", summary = "Get experiment by id", description = "Get experiment by id", responses = {
             @ApiResponse(responseCode = "200", description = "Experiment resource", content = @Content(schema = @Schema(implementation = Experiment.class))),
             @ApiResponse(responseCode = "404", description = "Not found", content = @Content(schema = @Schema(implementation = ErrorMessage.class)))})
+    @RequiredPermissions(WorkspaceUserPermission.EXPERIMENT_VIEW)
     @JsonView(Experiment.View.Public.class)
     public Response get(@PathParam("id") UUID id) {
 
@@ -179,6 +293,7 @@ public class ExperimentsResource {
     @Operation(operationId = "createExperiment", summary = "Create experiment", description = "Create experiment", responses = {
             @ApiResponse(responseCode = "201", description = "Created", headers = {
                     @Header(name = "Location", required = true, example = "${basePath}/v1/private/experiments/{id}", schema = @Schema(implementation = String.class))})})
+    @RequiredPermissions(WorkspaceUserPermission.EXPERIMENT_CREATE)
     @RateLimited
     public Response create(
             @RequestBody(content = @Content(schema = @Schema(implementation = Experiment.class))) @JsonView(Experiment.View.Write.class) @NotNull @Valid Experiment experiment,
@@ -195,6 +310,47 @@ public class ExperimentsResource {
         return Response.created(uri).build();
     }
 
+    @PATCH
+    @Path("/{id}")
+    @Operation(operationId = "updateExperiment", summary = "Update experiment by id", description = "Update experiment by id", responses = {
+            @ApiResponse(responseCode = "204", description = "No Content"),
+            @ApiResponse(responseCode = "404", description = "Not found", content = @Content(schema = @Schema(implementation = ErrorMessage.class))),
+            @ApiResponse(responseCode = "400", description = "Bad Request", content = @Content(schema = @Schema(implementation = ErrorMessage.class)))
+    })
+    @RateLimited
+    public Response update(@PathParam("id") UUID id,
+            @RequestBody(content = @Content(schema = @Schema(implementation = ExperimentUpdate.class))) @NotNull @Valid ExperimentUpdate experimentUpdate) {
+        var workspaceId = requestContext.get().getWorkspaceId();
+        log.info("Updating experiment with id '{}', workspaceId '{}'", id, workspaceId);
+        experimentService.update(id, experimentUpdate)
+                .contextWrite(ctx -> setRequestContext(ctx, requestContext))
+                .block();
+        log.info("Updated experiment with id '{}', workspaceId '{}'", id, workspaceId);
+        return Response.noContent().build();
+    }
+
+    @PATCH
+    @Path("/batch")
+    @Operation(operationId = "batchUpdateExperiments", summary = "Batch update experiments", description = "Update multiple experiments", responses = {
+            @ApiResponse(responseCode = "204", description = "No Content"),
+            @ApiResponse(responseCode = "400", description = "Bad Request", content = @Content(schema = @Schema(implementation = ErrorMessage.class)))})
+    @RateLimited
+    public Response batchUpdate(
+            @RequestBody(content = @Content(schema = @Schema(implementation = ExperimentBatchUpdate.class))) @Valid @NotNull ExperimentBatchUpdate batchUpdate) {
+
+        String workspaceId = requestContext.get().getWorkspaceId();
+
+        log.info("Batch updating '{}' experiments on workspaceId '{}'", batchUpdate.ids().size(), workspaceId);
+
+        experimentService.batchUpdate(batchUpdate)
+                .contextWrite(ctx -> setRequestContext(ctx, requestContext))
+                .block();
+
+        log.info("Batch updated '{}' experiments on workspaceId '{}'", batchUpdate.ids().size(), workspaceId);
+
+        return Response.noContent().build();
+    }
+
     @POST
     @Path("/delete")
     @Operation(operationId = "deleteExperimentsById", summary = "Delete experiments by id", description = "Delete experiments by id", responses = {
@@ -207,6 +363,25 @@ public class ExperimentsResource {
                 .contextWrite(ctx -> setRequestContext(ctx, requestContext))
                 .block();
         log.info("Deleted experiments, count '{}'", request.ids());
+        return Response.noContent().build();
+    }
+
+    @POST
+    @Path("/finish")
+    @Operation(operationId = "finishExperiments", summary = "Finish experiments", description = "Finish experiments and trigger alert events", responses = {
+            @ApiResponse(responseCode = "204", description = "No content"),
+            @ApiResponse(responseCode = "400", description = "Bad Request", content = @Content(schema = @Schema(implementation = ErrorMessage.class)))
+    })
+    @RateLimited
+    public Response finishExperiments(
+            @RequestBody(content = @Content(schema = @Schema(implementation = DeleteIdsHolder.class))) @NotNull @Valid IdsHolder request) {
+
+        log.info("Finishing experiments, count '{}'", request.ids().size());
+        experimentService.finishExperiments(request.ids())
+                .contextWrite(ctx -> setRequestContext(ctx, requestContext))
+                .block();
+        log.info("Finished experiments, count '{}'", request.ids().size());
+
         return Response.noContent().build();
     }
 
@@ -275,6 +450,7 @@ public class ExperimentsResource {
                 .limit(request.limit())
                 .lastRetrievedId(request.lastRetrievedId())
                 .truncate(request.truncate())
+                .projectName(request.projectName())
                 .build();
         var items = experimentItemService.getExperimentItems(criteria)
                 .contextWrite(ctx -> ctx.put(RequestContext.USER_NAME, userName)
@@ -306,7 +482,7 @@ public class ExperimentsResource {
         log.info("Creating experiment items, count '{}'", newRequest.size());
         experimentItemService.create(newRequest)
                 .contextWrite(ctx -> setRequestContext(ctx, requestContext))
-                .retryWhen(AsyncUtils.handleConnectionError())
+                .retryWhen(RetryUtils.handleConnectionError())
                 .block();
         log.info("Created experiment items, count '{}'", newRequest.size());
         return Response.noContent().build();
@@ -335,6 +511,7 @@ public class ExperimentsResource {
             "Maximum request size is 4MB.", responses = {
                     @ApiResponse(responseCode = "204", description = "No content"),
                     @ApiResponse(responseCode = "400", description = "Bad Request", content = @Content(schema = @Schema(implementation = ErrorMessage.class))),
+                    @ApiResponse(responseCode = "409", description = "Conflict", content = @Content(schema = @Schema(implementation = ErrorMessage.class))),
                     @ApiResponse(responseCode = "422", description = "Unprocessable Content", content = @Content(schema = @Schema(implementation = com.comet.opik.api.error.ErrorMessage.class))),
             })
     @RateLimited
@@ -342,10 +519,8 @@ public class ExperimentsResource {
     public Response experimentItemsBulk(
             @RequestBody(content = @Content(schema = @Schema(implementation = ExperimentItemBulkUpload.class))) @NotNull @Valid @JsonView(ExperimentItemBulkUpload.View.ExperimentItemBulkWriteView.class) ExperimentItemBulkUpload request) {
 
-        String workspaceId = requestContext.get().getWorkspaceId();
-        String userName = requestContext.get().getUserName();
-
-        log.info("Recording experiment items in bulk, count '{}'", request.items().size());
+        log.info("Recording experiment items in bulk, count '{}', experimentId '{}'", request.items().size(),
+                request.experimentId());
 
         List<ExperimentItemBulkRecord> items = request.items()
                 .stream()
@@ -357,28 +532,54 @@ public class ExperimentsResource {
                 .toList();
 
         Experiment experiment = Experiment.builder()
+                .id(request.experimentId())
                 .datasetName(request.datasetName())
                 .name(request.experimentName())
+                .projectName(request.projectName())
                 .build();
 
-        experimentItemBulkIngestionService.ingest(experiment, items)
-                .contextWrite(ctx -> ctx.put(RequestContext.USER_NAME, userName)
-                        .put(RequestContext.WORKSPACE_ID, workspaceId))
-                .retryWhen(AsyncUtils.handleConnectionError())
+        // The service resolves the project (explicit project_name, else derived from the existing experiment
+        // or dataset, else the default project) and reports which deprecated fallback (if any) it used.
+        ExperimentItemBulkIngestionService.ProjectFallback fallback = experimentItemBulkIngestionService
+                .ingest(experiment, request.projectName(), items)
+                .contextWrite(ctx -> setRequestContext(ctx, requestContext))
+                .retryWhen(RetryUtils.handleConnectionError())
                 .block();
 
-        log.info("Recorded experiment items in bulk, count '{}'", request.items().size());
+        log.info("Recorded experiment items in bulk, count '{}', experimentId '{}'", request.items().size(),
+                request.experimentId());
 
-        return Response.noContent().build();
+        Response.ResponseBuilder responseBuilder = Response.noContent();
+
+        // Surface the deprecated implicit-fallback as the X-Opik-Deprecation header (on the request thread, so
+        // the request-scoped fallback message can be set/read safely — same mechanism as other resources).
+        switch (fallback) {
+            case DATASET -> {
+                requestContext.get().setWorkspaceFallbackFor("Dataset", request.datasetName());
+                responseBuilder.header(RequestContext.WORKSPACE_FALLBACK_HEADER,
+                        requestContext.get().getWorkspaceFallbackMessage());
+            }
+            case DEFAULT -> responseBuilder.header(RequestContext.WORKSPACE_FALLBACK_HEADER,
+                    ("project_name could not be resolved; traces without a project were placed in the default "
+                            + "project '%s'. This fallback is deprecated, please provide project_name.")
+                            .formatted(ProjectService.DEFAULT_PROJECT));
+            case NONE -> {
+                // no deprecation
+            }
+        }
+
+        return responseBuilder.build();
     }
 
     @GET
     @Path("/feedback-scores/names")
     @Operation(operationId = "findFeedbackScoreNames", summary = "Find Feedback Score names", description = "Find Feedback Score names", responses = {
-            @ApiResponse(responseCode = "200", description = "Feedback Scores resource", content = @Content(array = @ArraySchema(schema = @Schema(implementation = String.class))))
+            @ApiResponse(responseCode = "200", description = "Feedback Scores resource", content = @Content(schema = @Schema(implementation = FeedbackScoreNames.class)))
     })
     @JsonView({FeedbackDefinition.View.Public.class})
-    public Response findFeedbackScoreNames(@QueryParam("experiment_ids") String experimentIdsQueryParam) {
+    public Response findFeedbackScoreNames(
+            @QueryParam("experiment_ids") String experimentIdsQueryParam,
+            @QueryParam("project_id") UUID projectId) {
 
         var experimentIds = Optional.ofNullable(experimentIdsQueryParam)
                 .map(ParamsValidator::getIds)
@@ -386,15 +587,39 @@ public class ExperimentsResource {
 
         String workspaceId = requestContext.get().getWorkspaceId();
 
-        log.info("Find feedback score names by experiment_ids '{}', on workspaceId '{}'",
-                experimentIds, workspaceId);
+        log.info("Find feedback score names by experiment_ids '{}', project_id '{}', on workspaceId '{}'",
+                experimentIds, projectId, workspaceId);
         FeedbackScoreNames feedbackScoreNames = feedbackScoreService
-                .getExperimentsFeedbackScoreNames(experimentIds)
+                .getExperimentsFeedbackScoreNames(experimentIds, projectId)
                 .contextWrite(ctx -> setRequestContext(ctx, requestContext))
                 .block();
-        log.info("Found feedback score names '{}' by experiment_ids '{}', on workspaceId '{}'",
-                feedbackScoreNames.scores().size(), experimentIds, workspaceId);
+        log.info("Found feedback score names '{}' by experiment_ids '{}', project_id '{}', on workspaceId '{}'",
+                feedbackScoreNames.scores().size(), experimentIds, projectId, workspaceId);
 
         return Response.ok(feedbackScoreNames).build();
     }
+
+    @POST
+    @Path("/execute")
+    @Operation(operationId = "executeExperiment", summary = "Create and execute experiment", description = "Creates experiments for each prompt variant and asynchronously processes all dataset items", responses = {
+            @ApiResponse(responseCode = "202", description = "Experiments created and processing started", content = @Content(schema = @Schema(implementation = ExperimentExecutionResponse.class))),
+    })
+    @RequiredPermissions(WorkspaceUserPermission.EXPERIMENT_VIEW)
+    public Response execute(@NotNull @Valid ExperimentExecutionRequest request) {
+        var context = requestContext.get();
+        var workspaceId = context.getWorkspaceId();
+        var userName = context.getUserName();
+
+        log.info("Executing experiment for dataset '{}', workspaceId '{}', prompts '{}'",
+                request.datasetName(), workspaceId, request.prompts().size());
+
+        var response = experimentExecutionService.createAndExecute(request)
+                .contextWrite(ctx -> setRequestContext(ctx, requestContext))
+                .block();
+
+        return Response.status(Response.Status.ACCEPTED)
+                .entity(response)
+                .build();
+    }
+
 }

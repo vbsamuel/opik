@@ -9,7 +9,13 @@ from ..core.pydantic_utilities import IS_PYDANTIC_V2, UniversalBaseModel
 class PromptVersionLink(UniversalBaseModel):
     id: str
     commit: typing.Optional[str] = None
+    version_number: typing.Optional[str] = pydantic.Field(default=None)
+    """
+    sequential version number in the format v<N>; null for masks
+    """
+
     prompt_id: typing.Optional[str] = None
+    prompt_name: typing.Optional[str] = None
 
     if IS_PYDANTIC_V2:
         model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(extra="allow", frozen=True)  # type: ignore # Pydantic v2

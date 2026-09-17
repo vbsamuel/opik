@@ -1,53 +1,67 @@
+from __future__ import annotations
+
 import opik
+from typing import Any
 
-TINY_TEST_ITEMS = [
-    {
-        "text": "What is the capital of France?",
-        "label": "Paris",
-        "metadata": {"context": "France is a country in Europe. Its capital is Paris."},
-    },
-    {
-        "text": "Who wrote Romeo and Juliet?",
-        "label": "William Shakespeare",
-        "metadata": {
-            "context": "Romeo and Juliet is a famous play written by William Shakespeare."
-        },
-    },
-    {
-        "text": "What is 2 + 2?",
-        "label": "4",
-        "metadata": {"context": "Basic arithmetic: 2 + 2 equals 4."},
-    },
-    {
-        "text": "What is the largest planet in our solar system?",
-        "label": "Jupiter",
-        "metadata": {"context": "Jupiter is the largest planet in our solar system."},
-    },
-    {
-        "text": "Who painted the Mona Lisa?",
-        "label": "Leonardo da Vinci",
-        "metadata": {"context": "The Mona Lisa was painted by Leonardo da Vinci."},
-    },
-]
+from opik_optimizer.api_objects.types import DatasetSpec, DatasetSplitPreset
+from opik_optimizer.utils.dataset import DatasetHandle, FilterBy
 
 
-def tiny_test(test_mode: bool = False) -> opik.Dataset:
-    """
-    Dataset containing the first 5 samples of the HotpotQA dataset.
-    """
-    dataset_name = "tiny_test" if not test_mode else "tiny_test_test"
-    nb_items = len(TINY_TEST_ITEMS)
-
-    client = opik.Opik()
-    dataset = client.get_or_create_dataset(dataset_name)
-
-    items = dataset.get_items()
-    if len(items) == nb_items:
-        return dataset
-    elif len(items) != 0:
-        raise ValueError(
-            f"Dataset {dataset_name} contains {len(items)} items, expected {nb_items}. We recommend deleting the dataset and re-creating it."
+def _tiny_records_transform(records: list[dict[str, str]]) -> list[dict[str, Any]]:
+    transformed: list[dict[str, Any]] = []
+    for rec in records:
+        transformed.append(
+            {
+                "text": rec.get("text", ""),
+                "label": rec.get("label", ""),
+                "metadata": {"context": rec.get("context", "")},
+            }
         )
-    elif len(items) == 0:
-        dataset.insert(TINY_TEST_ITEMS)
-        return dataset
+    return transformed
+
+
+TINY_TEST_SPEC = DatasetSpec(
+    name="tiny_test",
+    default_source_split="train",
+    load_kwargs_resolver=lambda split: {
+        "path": "json",
+        "data_files": "hf://datasets/vincentkoc/tiny_qa_benchmark_pp/data/core_en/core_en.jsonl",
+        "split": split,
+    },
+    prefer_presets=True,
+    presets={
+        "train": DatasetSplitPreset(
+            source_split="train",
+            start=0,
+            count=5,
+            dataset_name="tiny_test_train",
+        )
+    },
+    records_transform=_tiny_records_transform,
+)
+
+_TINY_TEST_HANDLE = DatasetHandle(TINY_TEST_SPEC)
+
+
+def tiny_test(
+    *,
+    split: str | None = None,
+    count: int | None = None,
+    start: int | None = None,
+    dataset_name: str | None = None,
+    test_mode: bool = False,
+    seed: int | None = None,
+    test_mode_count: int | None = None,
+    filter_by: FilterBy | None = None,
+) -> opik.Dataset:
+    """Tiny QA benchmark slices (core_en subset)."""
+    return _TINY_TEST_HANDLE.load(
+        split=split,
+        count=count,
+        start=start,
+        dataset_name=dataset_name,
+        test_mode=test_mode,
+        seed=seed,
+        test_mode_count=test_mode_count,
+        filter_by=filter_by,
+    )

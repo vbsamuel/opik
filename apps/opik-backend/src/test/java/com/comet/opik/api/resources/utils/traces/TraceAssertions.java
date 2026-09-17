@@ -5,12 +5,18 @@ import com.comet.opik.api.Trace;
 import com.comet.opik.api.TraceThread;
 import com.comet.opik.api.resources.utils.DurationUtils;
 import com.comet.opik.api.resources.utils.StatsUtils;
+import com.comet.opik.utils.JsonUtils;
+import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.ws.rs.core.Response;
+import org.assertj.core.api.recursive.comparison.RecursiveComparisonConfiguration;
 
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.EnumMap;
 import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
 
 import static com.comet.opik.api.resources.utils.CommentAssertionUtils.assertComments;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -19,13 +25,85 @@ import static org.assertj.core.api.Assertions.within;
 public class TraceAssertions {
 
     public static final String[] IGNORED_FIELDS_TRACES = {"projectId", "projectName", "createdAt",
-            "lastUpdatedAt", "feedbackScores", "createdBy", "lastUpdatedBy", "totalEstimatedCost", "spanCount",
-            "llmSpanCount", "duration", "comments", "threadId", "guardrailsValidations"};
+            "lastUpdatedAt", "feedbackScores", "spanFeedbackScores", "createdBy", "lastUpdatedBy", "totalEstimatedCost",
+            "spanCount", "llmSpanCount", "hasToolSpans", "duration", "comments", "threadId", "guardrailsValidations",
+            "providers", "experiment"};
 
-    private static final String[] IGNORED_FIELDS_SCORES = {"createdAt", "lastUpdatedAt", "createdBy", "lastUpdatedBy"};
+    public static final String[] IGNORED_FIELDS_SCORES = {"createdAt", "lastUpdatedAt", "createdBy", "lastUpdatedBy",
+            "valueByAuthor", "sourceQueueId"};
 
     private static final String[] IGNORED_FIELDS_THREADS = {"createdAt", "lastUpdatedAt", "createdBy", "lastUpdatedBy",
-            "threadModelId", "feedbackScores.createdAt", "feedbackScores.lastUpdatedAt"};
+            "threadModelId", "feedbackScores.createdAt", "feedbackScores.lastUpdatedAt",
+            "feedbackScores.valueByAuthor", "feedbackScores.sourceQueueId"};
+
+    /**
+     * Prepares a trace for assertion by injecting providers into metadata if providers are set.
+     * This mirrors the backend behavior where providers are automatically injected into metadata.
+     *
+     * @param trace the trace to prepare
+     * @return a new trace with providers injected into metadata if providers are present
+     */
+    private static Trace prepareTraceForAssertion(Trace trace) {
+        if (trace.providers() == null || trace.providers().isEmpty()) {
+            return trace;
+        }
+
+        JsonNode metadataWithProviders = JsonUtils.prependField(
+                trace.metadata(), Trace.TraceField.PROVIDERS.getValue(), trace.providers());
+
+        return trace.toBuilder()
+                .metadata(metadataWithProviders)
+                .build();
+    }
+
+    /**
+     * Prepares a list of traces for assertion by injecting providers into metadata.
+     *
+     * @param traces the traces to prepare
+     * @return a new list of traces with providers injected into metadata where applicable
+     */
+    private static List<Trace> prepareTracesForAssertion(List<Trace> traces) {
+        return traces.stream()
+                .map(TraceAssertions::prepareTraceForAssertion)
+                .toList();
+    }
+
+    public static final Map<Trace.TraceField, Function<Trace, Trace>> EXCLUDE_FUNCTIONS = new EnumMap<>(
+            Trace.TraceField.class);
+
+    static {
+        EXCLUDE_FUNCTIONS.put(Trace.TraceField.NAME, it -> it.toBuilder().name(null).build());
+        EXCLUDE_FUNCTIONS.put(Trace.TraceField.START_TIME, it -> it.toBuilder().startTime(null).build());
+        EXCLUDE_FUNCTIONS.put(Trace.TraceField.END_TIME, it -> it.toBuilder().endTime(null).build());
+        EXCLUDE_FUNCTIONS.put(Trace.TraceField.INPUT, it -> it.toBuilder().input(null).build());
+        EXCLUDE_FUNCTIONS.put(Trace.TraceField.OUTPUT, it -> it.toBuilder().output(null).build());
+        EXCLUDE_FUNCTIONS.put(Trace.TraceField.METADATA, it -> it.toBuilder().metadata(null).build());
+        EXCLUDE_FUNCTIONS.put(Trace.TraceField.TAGS, it -> it.toBuilder().tags(null).build());
+        EXCLUDE_FUNCTIONS.put(Trace.TraceField.USAGE, it -> it.toBuilder().usage(null).build());
+        EXCLUDE_FUNCTIONS.put(Trace.TraceField.ERROR_INFO, it -> it.toBuilder().errorInfo(null).build());
+        EXCLUDE_FUNCTIONS.put(Trace.TraceField.CREATED_AT, it -> it.toBuilder().createdAt(null).build());
+        EXCLUDE_FUNCTIONS.put(Trace.TraceField.CREATED_BY, it -> it.toBuilder().createdBy(null).build());
+        EXCLUDE_FUNCTIONS.put(Trace.TraceField.LAST_UPDATED_BY, it -> it.toBuilder().lastUpdatedBy(null).build());
+        EXCLUDE_FUNCTIONS.put(Trace.TraceField.FEEDBACK_SCORES, it -> it.toBuilder().feedbackScores(null).build());
+        EXCLUDE_FUNCTIONS.put(Trace.TraceField.SPAN_FEEDBACK_SCORES,
+                it -> it.toBuilder().spanFeedbackScores(null).build());
+        EXCLUDE_FUNCTIONS.put(Trace.TraceField.COMMENTS, it -> it.toBuilder().comments(null).build());
+        EXCLUDE_FUNCTIONS.put(Trace.TraceField.GUARDRAILS_VALIDATIONS,
+                it -> it.toBuilder().guardrailsValidations(null).build());
+        EXCLUDE_FUNCTIONS.put(Trace.TraceField.SPAN_COUNT, it -> it.toBuilder().spanCount(0).build());
+        EXCLUDE_FUNCTIONS.put(Trace.TraceField.LLM_SPAN_COUNT, it -> it.toBuilder().llmSpanCount(0).build());
+        EXCLUDE_FUNCTIONS.put(Trace.TraceField.HAS_TOOL_SPANS, it -> it.toBuilder().hasToolSpans(false).build());
+        EXCLUDE_FUNCTIONS.put(Trace.TraceField.TOTAL_ESTIMATED_COST,
+                it -> it.toBuilder().totalEstimatedCost(null).build());
+        EXCLUDE_FUNCTIONS.put(Trace.TraceField.THREAD_ID, it -> it.toBuilder().threadId(null).build());
+        EXCLUDE_FUNCTIONS.put(Trace.TraceField.DURATION, it -> it.toBuilder().duration(null).build());
+        EXCLUDE_FUNCTIONS.put(Trace.TraceField.VISIBILITY_MODE, it -> it.toBuilder().visibilityMode(null).build());
+        EXCLUDE_FUNCTIONS.put(Trace.TraceField.PROVIDERS, it -> it.toBuilder().providers(null).build());
+        EXCLUDE_FUNCTIONS.put(Trace.TraceField.EXPERIMENT, it -> it.toBuilder().experiment(null).build());
+        EXCLUDE_FUNCTIONS.put(Trace.TraceField.TTFT, it -> it.toBuilder().ttft(null).build());
+        EXCLUDE_FUNCTIONS.put(Trace.TraceField.SOURCE, it -> it.toBuilder().source(null).build());
+        EXCLUDE_FUNCTIONS.put(Trace.TraceField.ENVIRONMENT, it -> it.toBuilder().environment(null).build());
+    }
 
     public static void assertErrorResponse(Response actualResponse, String message, int expectedStatus) {
         assertThat(actualResponse.getStatusInfo().getStatusCode()).isEqualTo(expectedStatus);
@@ -41,16 +119,40 @@ public class TraceAssertions {
     public static void assertTraces(List<Trace> actualTraces, List<Trace> expectedTraces, List<Trace> unexpectedTraces,
             String user) {
 
-        assertThat(actualTraces)
-                .usingRecursiveFieldByFieldElementComparatorIgnoringFields(IGNORED_FIELDS_TRACES)
-                .containsExactlyElementsOf(expectedTraces);
+        // Automatically prepare expected traces with actual providers injected into metadata
+        // We need to use actual providers because they're calculated from spans in the database
+        var preparedExpectedTraces = expectedTraces.stream()
+                .map(expected -> {
+                    var actual = actualTraces.stream()
+                            .filter(a -> a.id().equals(expected.id()))
+                            .findFirst()
+                            .orElse(null);
+                    if (actual == null) {
+                        return prepareTraceForAssertion(expected);
+                    }
+                    // Use actual providers for metadata injection
+                    var expectedWithActualProviders = expected.toBuilder()
+                            .providers(actual.providers())
+                            .build();
+                    return prepareTraceForAssertion(expectedWithActualProviders);
+                })
+                .toList();
 
-        assertIgnoredFields(actualTraces, expectedTraces, user);
+        assertThat(actualTraces)
+                .usingRecursiveComparison()
+                .withComparatorForType(StatsUtils::compareDoubles, Double.class)
+                .ignoringFields(IGNORED_FIELDS_TRACES)
+                .isEqualTo(preparedExpectedTraces);
+
+        assertIgnoredFields(actualTraces, preparedExpectedTraces, user);
 
         if (!unexpectedTraces.isEmpty()) {
+            var preparedUnexpectedTraces = prepareTracesForAssertion(unexpectedTraces);
             assertThat(actualTraces)
-                    .usingRecursiveFieldByFieldElementComparatorIgnoringFields(IGNORED_FIELDS_TRACES)
-                    .doesNotContainAnyElementsOf(unexpectedTraces);
+                    .usingRecursiveComparison()
+                    .withComparatorForType(StatsUtils::compareDoubles, Double.class)
+                    .ignoringFields(IGNORED_FIELDS_TRACES)
+                    .isNotEqualTo(preparedUnexpectedTraces);
         }
     }
 
@@ -77,7 +179,7 @@ public class TraceAssertions {
         assertThat(actualTrace.projectName()).isNull();
 
         if (actualTrace.createdAt() != null) {
-            assertThat(actualTrace.createdAt()).isAfter(expectedTrace.createdAt());
+            assertThat(actualTrace.createdAt()).isAfterOrEqualTo(expectedTrace.createdAt());
         }
 
         if (actualTrace.lastUpdatedAt() != null) {
@@ -106,12 +208,17 @@ public class TraceAssertions {
             assertThat(actualTrace.duration()).isEqualTo(expectedTrace.duration(), within(0.001));
         }
 
-        assertThat(actualTrace.feedbackScores())
-                .usingRecursiveComparison()
-                .withComparatorForType(BigDecimal::compareTo, BigDecimal.class)
-                .ignoringFields(IGNORED_FIELDS_SCORES)
-                .ignoringCollectionOrder()
-                .isEqualTo(expectedTrace.feedbackScores());
+        RecursiveComparisonConfiguration config = new RecursiveComparisonConfiguration();
+        config.ignoreFields(IGNORED_FIELDS_SCORES);
+        config.registerComparatorForType(BigDecimal::compareTo, BigDecimal.class);
+
+        if (expectedTrace.feedbackScores() == null) {
+            assertThat(actualTrace.feedbackScores()).isNull();
+        } else {
+            assertThat(actualTrace.feedbackScores())
+                    .usingRecursiveFieldByFieldElementComparator(config)
+                    .containsExactlyInAnyOrderElementsOf(expectedTrace.feedbackScores());
+        }
 
         if (expectedTrace.feedbackScores() != null) {
             Instant lastUpdatedAt = expectedTrace.lastUpdatedAt();
@@ -143,6 +250,7 @@ public class TraceAssertions {
 
         assertThat(actualStats)
                 .usingRecursiveComparison(StatsUtils.getRecursiveComparisonConfiguration())
+                .ignoringCollectionOrder()
                 .isEqualTo(expectedStats);
     }
 

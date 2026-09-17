@@ -29,8 +29,8 @@ def wait_for_done(
 
 def until(
     function: Callable[[], bool],
-    sleep: float = 0.5,
-    max_try_seconds: float = 10,
+    sleep: float = 0.1,
+    max_try_seconds: float = 5,
     allow_errors: bool = False,
 ) -> bool:
     """
@@ -40,15 +40,14 @@ def until(
     while True:
         try:
             if function():
-                break
+                return True
         except Exception:
             LOGGER.debug(
                 f"{function.__name__} raised error in 'until' function.", exc_info=True
             )
             if not allow_errors:
                 raise
-        finally:
-            if (time.time() - start_time) > max_try_seconds:
-                return False
-            time.sleep(sleep)
-    return True
+
+        if (time.time() - start_time) > max_try_seconds:
+            return False
+        time.sleep(sleep)

@@ -13,10 +13,35 @@ import {
 } from "@/types/playground";
 import { isValidJsonObject, safelyParseJSON, snakeCaseObj } from "@/lib/utils";
 import { BASE_API_URL } from "@/api/api";
+import { sanitizeConfigForRequest } from "@/lib/modelUtils";
 import { LLMPromptConfigsType, PROVIDER_MODEL_TYPE } from "@/types/providers";
 import { ProviderMessageType } from "@/types/llm";
 
 const DATA_PREFIX = "data:";
+
+/**
+ * Processes SSE chunk data with buffering for incomplete lines.
+ * SSE messages can be split across network chunks, so we buffer incomplete
+ * lines and only process complete lines (those ending with newline).
+ */
+export const processSSEChunk = (
+  chunk: string,
+  buffer: string,
+): { lines: string[]; newBuffer: string } => {
+  const data = buffer + chunk;
+  const lines = data.split("\n");
+
+  // if the data doesn't end with newline, the last element is incomplete
+  // save it for the next iteration
+  let newBuffer = "";
+  if (!data.endsWith("\n")) {
+    newBuffer = lines.pop() || "";
+  }
+
+  const completeLines = lines.filter((line) => line.trim() !== "");
+
+  return { lines: completeLines, newBuffer };
+};
 
 const getNowUtcTimeISOString = (): string => {
   return dayjs().utc().toISOString();
@@ -58,6 +83,11 @@ const getCompletionProxyStream = async ({
   configs,
   workspaceName,
 }: GetCompletionProxyStreamParams) => {
+  const configsRecord = sanitizeConfigForRequest(
+    model,
+    configs as unknown as Record<string, unknown>,
+  );
+
   return fetch(`${BASE_API_URL}/v1/private/chat/completions`, {
     method: "POST",
     headers: {
@@ -69,7 +99,7 @@ const getCompletionProxyStream = async ({
       messages,
       stream: true,
       stream_options: { include_usage: true },
-      ...snakeCaseObj(configs),
+      ...snakeCaseObj(configsRecord),
     }),
     credentials: "include",
     signal,
@@ -93,6 +123,9 @@ export interface RunStreamingReturn {
   providerError: null | string;
   opikError: null | string;
   pythonProxyError: null | string;
+  // Resolved model and provider from headers (for span tracking)
+  actualModel: string | null;
+  actualProvider: string | null;
 }
 
 interface UseCompletionProxyStreamingParameters {
@@ -121,6 +154,10 @@ const useCompletionProxyStreaming = ({
       let opikError = null;
       let providerError = null;
 
+      // Resolved model/provider from headers
+      let actualModel: string | null = null;
+      let actualProvider: string | null = null;
+
       try {
         const response = await getCompletionProxyStream({
           model,
@@ -129,6 +166,10 @@ const useCompletionProxyStreaming = ({
           signal,
           workspaceName,
         });
+
+        // Extract resolved model and provider from headers
+        actualModel = response.headers.get("X-Opik-Actual-Model");
+        actualProvider = response.headers.get("X-Opik-Provider");
 
         const reader = response?.body?.getReader();
         const decoder = new TextDecoder("utf-8");
@@ -181,6 +222,9 @@ const useCompletionProxyStreaming = ({
           }
         };
 
+        // buffer to hold incomplete lines across chunks
+        let lineBuffer = "";
+
         // an analogue of true && reader
         // we need it to wait till the stream is closed
         while (reader) {
@@ -191,12 +235,17 @@ const useCompletionProxyStreaming = ({
           }
 
           const chunk = decoder.decode(value, { stream: true });
-          const lines = chunk.split("\n").filter((line) => line.trim() !== "");
+          const { lines, newBuffer } = processSSEChunk(chunk, lineBuffer);
+          lineBuffer = newBuffer;
 
           for (const line of lines) {
             const JSONData = line.startsWith(DATA_PREFIX)
               ? line.split(DATA_PREFIX)[1]
               : line;
+
+            if (JSONData.trim() === "[DONE]") {
+              continue;
+            }
 
             const parsed = safelyParseJSON(JSONData) as ChatCompletionResponse;
 
@@ -222,6 +271,8 @@ const useCompletionProxyStreaming = ({
           pythonProxyError,
           usage,
           choices,
+          actualModel,
+          actualProvider,
         };
         //   abort signal also jumps into here
       } catch (error) {
@@ -240,6 +291,8 @@ const useCompletionProxyStreaming = ({
           pythonProxyError,
           usage: null,
           choices,
+          actualModel,
+          actualProvider,
         };
       }
     },

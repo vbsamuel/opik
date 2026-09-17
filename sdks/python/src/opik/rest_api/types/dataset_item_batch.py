@@ -18,7 +18,31 @@ class DatasetItemBatch(UniversalBaseModel):
     If null, dataset_name must be provided
     """
 
+    project_name: typing.Optional[str] = pydantic.Field(default=None)
+    """
+    Optional. Associates the batch with a project by name. Ignored if project_id is provided.
+    """
+
+    project_id: typing.Optional[str] = pydantic.Field(default=None)
+    """
+    Optional. Associates the batch with a project by ID. Takes precedence over project_name.
+    """
+
     items: typing.List[DatasetItem]
+    batch_group_id: typing.Optional[str] = pydantic.Field(default=None)
+    """
+    Optional batch group ID to group multiple batches into a single dataset version. If null, mutates the latest version instead of creating a new one.
+    """
+
+    copy_from_dataset_id: typing.Optional[str] = pydantic.Field(default=None)
+    """
+    Optional. Dataset to read carry-forward rows from when materializing the new version. Required together with copy_from_version_id. When null, carry-forward rows are read from the destination dataset's prior version.
+    """
+
+    copy_from_version_id: typing.Optional[str] = pydantic.Field(default=None)
+    """
+    Optional. Version within copy_from_dataset_id to read carry-forward rows from. Required together with copy_from_dataset_id.
+    """
 
     if IS_PYDANTIC_V2:
         model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(extra="allow", frozen=True)  # type: ignore # Pydantic v2

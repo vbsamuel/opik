@@ -1,6 +1,5 @@
 package com.comet.opik.infrastructure.auth;
 
-import com.comet.opik.api.Project;
 import com.comet.opik.api.resources.utils.AuthTestUtils;
 import com.comet.opik.api.resources.utils.ClickHouseContainerUtils;
 import com.comet.opik.api.resources.utils.ClientSupportUtils;
@@ -14,7 +13,6 @@ import com.comet.opik.extensions.DropwizardAppExtensionProvider;
 import com.comet.opik.extensions.RegisterApp;
 import com.github.tomakehurst.wiremock.client.WireMock;
 import com.redis.testcontainers.RedisContainer;
-import jakarta.ws.rs.client.Entity;
 import jakarta.ws.rs.core.HttpHeaders;
 import jakarta.ws.rs.core.Response;
 import org.junit.jupiter.api.BeforeAll;
@@ -23,8 +21,8 @@ import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.testcontainers.clickhouse.ClickHouseContainer;
 import org.testcontainers.containers.GenericContainer;
-import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.lifecycle.Startables;
+import org.testcontainers.mysql.MySQLContainer;
 import reactor.core.publisher.Mono;
 import ru.vyarus.dropwizard.guice.test.ClientSupport;
 import ru.vyarus.dropwizard.guice.test.jupiter.ext.TestDropwizardAppExtension;
@@ -50,7 +48,7 @@ class AuthModuleCache2E2Test {
     private static final String TEST_WORKSPACE = UUID.randomUUID().toString();
 
     private final RedisContainer REDIS = RedisContainerUtils.newRedisContainer();
-    private final MySQLContainer<?> MYSQL = MySQLContainerUtils.newMySQLContainer();
+    private final MySQLContainer MYSQL = MySQLContainerUtils.newMySQLContainer();
     private final GenericContainer<?> ZOOKEEPER_CONTAINER = ClickHouseContainerUtils.newZookeeperContainer();
     private final ClickHouseContainer CLICKHOUSE = ClickHouseContainerUtils.newClickHouseContainer(ZOOKEEPER_CONTAINER);
     private final WireMockUtils.WireMockRuntime wireMock;
@@ -88,15 +86,6 @@ class AuthModuleCache2E2Test {
 
     @Test
     void testAuthCache__whenApiKeyAndWorkspaceAreCached__thenUseTheCacheUntilTTLExpire() {
-
-        try (Response response = client.target(URL_TEMPLATE.formatted(baseURI))
-                .request()
-                .header(WORKSPACE_HEADER, TEST_WORKSPACE)
-                .header(HttpHeaders.AUTHORIZATION, API_KEY)
-                .post(Entity.json(Project.builder().name(UUID.randomUUID().toString()).build()))) {
-
-            assertThat(response.getStatus()).isEqualTo(201);
-        }
 
         try (var response = callEndpoint()) {
 

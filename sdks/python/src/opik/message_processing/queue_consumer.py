@@ -4,7 +4,8 @@ import time
 from queue import Empty
 from typing import Optional
 
-from . import message_processors, message_queue, messages
+from . import message_queue, messages
+from .processors import message_processors
 from .. import exceptions, _logging
 
 LOGGER = logging.getLogger(__name__)
@@ -24,7 +25,6 @@ class QueueConsumer(threading.Thread):
         self._message_queue = queue
         self._message_processor = message_processor
         self._processing_stopped = False
-        self.idling = True
         self.next_message_time = time.monotonic()
 
     def run(self) -> None:
@@ -36,21 +36,18 @@ class QueueConsumer(threading.Thread):
     def _loop(self) -> None:
         now = time.monotonic()
         if now < self.next_message_time:
-            # mark as not idling because we still have work to do
-            self.idling = False
             time.sleep(SLEEP_BETWEEN_LOOP_ITERATIONS)
             return
 
         message = None
         try:
-            self.idling = True
             message = self._message_queue.get(timeout=SLEEP_BETWEEN_LOOP_ITERATIONS)
-            self.idling = False
 
             if message is None:
                 return
-            elif message.delivery_time <= now:
-                self._message_processor.process(message)
+
+            if message.delivery_time <= now:
+                self._process_message(message)
             else:
                 # put a message back to keep an order in the queue
                 self._push_message_back(message)
@@ -87,4 +84,22 @@ class QueueConsumer(threading.Thread):
                 "The message queue size limit has been reached. The current message has been returned to the queue, and the newest message has been discarded.",
                 logger=LOGGER,
             )
+        message.delivery_attempts += 1
         self._message_queue.put_back(message)
+
+    def _process_message(self, message: messages.BaseMessage) -> None:
+        try:
+            self._message_processor.process(message)
+        except exceptions.OpikCloudRequestsRateLimited:
+            # Caller will re-enqueue the message via put_back; the task is
+            # still in flight, so leave the queue's unfinished-task counter
+            # untouched and let the rate-limit handler in `_loop` run.
+            raise
+        except Exception:
+            # Permanent failure: the message was popped and will not be
+            # retried. Count it as done so quiescence bookkeeping doesn't
+            # stall (`join` / `all_tasks_done`).
+            self._message_queue.task_done()
+            raise
+        else:
+            self._message_queue.task_done()

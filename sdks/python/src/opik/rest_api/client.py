@@ -3,28 +3,50 @@
 import typing
 
 import httpx
+from .agent_configs.client import AgentConfigsClient, AsyncAgentConfigsClient
+from .agent_insights.client import AgentInsightsClient, AsyncAgentInsightsClient
+from .agent_insights_jobs.client import AgentInsightsJobsClient, AsyncAgentInsightsJobsClient
+from .alerts.client import AlertsClient, AsyncAlertsClient
+from .annotation_queues.client import AnnotationQueuesClient, AsyncAnnotationQueuesClient
+from .assertion_results.client import AssertionResultsClient, AsyncAssertionResultsClient
 from .attachments.client import AsyncAttachmentsClient, AttachmentsClient
 from .automation_rule_evaluators.client import AsyncAutomationRuleEvaluatorsClient, AutomationRuleEvaluatorsClient
 from .chat_completions.client import AsyncChatCompletionsClient, ChatCompletionsClient
 from .check.client import AsyncCheckClient, CheckClient
 from .core.client_wrapper import AsyncClientWrapper, SyncClientWrapper
 from .core.request_options import RequestOptions
+from .dashboards.client import AsyncDashboardsClient, DashboardsClient
 from .datasets.client import AsyncDatasetsClient, DatasetsClient
 from .environment import OpikApiEnvironment
+from .environments.client import AsyncEnvironmentsClient, EnvironmentsClient
 from .experiments.client import AsyncExperimentsClient, ExperimentsClient
 from .feedback_definitions.client import AsyncFeedbackDefinitionsClient, FeedbackDefinitionsClient
 from .guardrails.client import AsyncGuardrailsClient, GuardrailsClient
+from .insights_views.client import AsyncInsightsViewsClient, InsightsViewsClient
+from .llm_models.client import AsyncLlmModelsClient, LlmModelsClient
 from .llm_provider_key.client import AsyncLlmProviderKeyClient, LlmProviderKeyClient
+from .manual_evaluation.client import AsyncManualEvaluationClient, ManualEvaluationClient
+from .mcp_o_auth.client import AsyncMcpOAuthClient, McpOAuthClient
+from .ollama.client import AsyncOllamaClient, OllamaClient
+from .ollie_state.client import AsyncOllieStateClient, OllieStateClient
 from .open_telemetry_ingestion.client import AsyncOpenTelemetryIngestionClient, OpenTelemetryIngestionClient
 from .optimizations.client import AsyncOptimizationsClient, OptimizationsClient
+from .pairing.client import AsyncPairingClient, PairingClient
 from .projects.client import AsyncProjectsClient, ProjectsClient
 from .prompts.client import AsyncPromptsClient, PromptsClient
 from .raw_client import AsyncRawOpikApi, RawOpikApi
 from .redirect.client import AsyncRedirectClient, RedirectClient
+from .report_failures.client import AsyncReportFailuresClient, ReportFailuresClient
+from .reports.client import AsyncReportsClient, ReportsClient
+from .retention_rules.client import AsyncRetentionRulesClient, RetentionRulesClient
+from .runners.client import AsyncRunnersClient, RunnersClient
 from .service_toggles.client import AsyncServiceTogglesClient, ServiceTogglesClient
 from .spans.client import AsyncSpansClient, SpansClient
+from .system_analytics_queries.client import AsyncSystemAnalyticsQueriesClient, SystemAnalyticsQueriesClient
 from .system_usage.client import AsyncSystemUsageClient, SystemUsageClient
 from .traces.client import AsyncTracesClient, TracesClient
+from .welcome_wizard.client import AsyncWelcomeWizardClient, WelcomeWizardClient
+from .workspace_permissions.client import AsyncWorkspacePermissionsClient, WorkspacePermissionsClient
 from .workspaces.client import AsyncWorkspacesClient, WorkspacesClient
 
 
@@ -87,23 +109,45 @@ class OpikApi:
             timeout=_defaulted_timeout,
         )
         self._raw_client = RawOpikApi(client_wrapper=self._client_wrapper)
+        self.mcp_o_auth = McpOAuthClient(client_wrapper=self._client_wrapper)
+        self.system_analytics_queries = SystemAnalyticsQueriesClient(client_wrapper=self._client_wrapper)
         self.system_usage = SystemUsageClient(client_wrapper=self._client_wrapper)
+        self.agent_configs = AgentConfigsClient(client_wrapper=self._client_wrapper)
+        self.agent_insights_jobs = AgentInsightsJobsClient(client_wrapper=self._client_wrapper)
+        self.agent_insights = AgentInsightsClient(client_wrapper=self._client_wrapper)
+        self.alerts = AlertsClient(client_wrapper=self._client_wrapper)
+        self.annotation_queues = AnnotationQueuesClient(client_wrapper=self._client_wrapper)
+        self.assertion_results = AssertionResultsClient(client_wrapper=self._client_wrapper)
         self.attachments = AttachmentsClient(client_wrapper=self._client_wrapper)
         self.check = CheckClient(client_wrapper=self._client_wrapper)
         self.automation_rule_evaluators = AutomationRuleEvaluatorsClient(client_wrapper=self._client_wrapper)
         self.chat_completions = ChatCompletionsClient(client_wrapper=self._client_wrapper)
+        self.dashboards = DashboardsClient(client_wrapper=self._client_wrapper)
         self.datasets = DatasetsClient(client_wrapper=self._client_wrapper)
+        self.environments = EnvironmentsClient(client_wrapper=self._client_wrapper)
         self.experiments = ExperimentsClient(client_wrapper=self._client_wrapper)
         self.feedback_definitions = FeedbackDefinitionsClient(client_wrapper=self._client_wrapper)
         self.guardrails = GuardrailsClient(client_wrapper=self._client_wrapper)
+        self.insights_views = InsightsViewsClient(client_wrapper=self._client_wrapper)
+        self.llm_models = LlmModelsClient(client_wrapper=self._client_wrapper)
         self.llm_provider_key = LlmProviderKeyClient(client_wrapper=self._client_wrapper)
+        self.runners = RunnersClient(client_wrapper=self._client_wrapper)
+        self.manual_evaluation = ManualEvaluationClient(client_wrapper=self._client_wrapper)
+        self.ollama = OllamaClient(client_wrapper=self._client_wrapper)
+        self.ollie_state = OllieStateClient(client_wrapper=self._client_wrapper)
         self.open_telemetry_ingestion = OpenTelemetryIngestionClient(client_wrapper=self._client_wrapper)
         self.optimizations = OptimizationsClient(client_wrapper=self._client_wrapper)
+        self.pairing = PairingClient(client_wrapper=self._client_wrapper)
         self.projects = ProjectsClient(client_wrapper=self._client_wrapper)
         self.prompts = PromptsClient(client_wrapper=self._client_wrapper)
+        self.report_failures = ReportFailuresClient(client_wrapper=self._client_wrapper)
+        self.reports = ReportsClient(client_wrapper=self._client_wrapper)
+        self.retention_rules = RetentionRulesClient(client_wrapper=self._client_wrapper)
         self.service_toggles = ServiceTogglesClient(client_wrapper=self._client_wrapper)
         self.spans = SpansClient(client_wrapper=self._client_wrapper)
         self.traces = TracesClient(client_wrapper=self._client_wrapper)
+        self.welcome_wizard = WelcomeWizardClient(client_wrapper=self._client_wrapper)
+        self.workspace_permissions = WorkspacePermissionsClient(client_wrapper=self._client_wrapper)
         self.workspaces = WorkspacesClient(client_wrapper=self._client_wrapper)
         self.redirect = RedirectClient(client_wrapper=self._client_wrapper)
 
@@ -220,23 +264,45 @@ class AsyncOpikApi:
             timeout=_defaulted_timeout,
         )
         self._raw_client = AsyncRawOpikApi(client_wrapper=self._client_wrapper)
+        self.mcp_o_auth = AsyncMcpOAuthClient(client_wrapper=self._client_wrapper)
+        self.system_analytics_queries = AsyncSystemAnalyticsQueriesClient(client_wrapper=self._client_wrapper)
         self.system_usage = AsyncSystemUsageClient(client_wrapper=self._client_wrapper)
+        self.agent_configs = AsyncAgentConfigsClient(client_wrapper=self._client_wrapper)
+        self.agent_insights_jobs = AsyncAgentInsightsJobsClient(client_wrapper=self._client_wrapper)
+        self.agent_insights = AsyncAgentInsightsClient(client_wrapper=self._client_wrapper)
+        self.alerts = AsyncAlertsClient(client_wrapper=self._client_wrapper)
+        self.annotation_queues = AsyncAnnotationQueuesClient(client_wrapper=self._client_wrapper)
+        self.assertion_results = AsyncAssertionResultsClient(client_wrapper=self._client_wrapper)
         self.attachments = AsyncAttachmentsClient(client_wrapper=self._client_wrapper)
         self.check = AsyncCheckClient(client_wrapper=self._client_wrapper)
         self.automation_rule_evaluators = AsyncAutomationRuleEvaluatorsClient(client_wrapper=self._client_wrapper)
         self.chat_completions = AsyncChatCompletionsClient(client_wrapper=self._client_wrapper)
+        self.dashboards = AsyncDashboardsClient(client_wrapper=self._client_wrapper)
         self.datasets = AsyncDatasetsClient(client_wrapper=self._client_wrapper)
+        self.environments = AsyncEnvironmentsClient(client_wrapper=self._client_wrapper)
         self.experiments = AsyncExperimentsClient(client_wrapper=self._client_wrapper)
         self.feedback_definitions = AsyncFeedbackDefinitionsClient(client_wrapper=self._client_wrapper)
         self.guardrails = AsyncGuardrailsClient(client_wrapper=self._client_wrapper)
+        self.insights_views = AsyncInsightsViewsClient(client_wrapper=self._client_wrapper)
+        self.llm_models = AsyncLlmModelsClient(client_wrapper=self._client_wrapper)
         self.llm_provider_key = AsyncLlmProviderKeyClient(client_wrapper=self._client_wrapper)
+        self.runners = AsyncRunnersClient(client_wrapper=self._client_wrapper)
+        self.manual_evaluation = AsyncManualEvaluationClient(client_wrapper=self._client_wrapper)
+        self.ollama = AsyncOllamaClient(client_wrapper=self._client_wrapper)
+        self.ollie_state = AsyncOllieStateClient(client_wrapper=self._client_wrapper)
         self.open_telemetry_ingestion = AsyncOpenTelemetryIngestionClient(client_wrapper=self._client_wrapper)
         self.optimizations = AsyncOptimizationsClient(client_wrapper=self._client_wrapper)
+        self.pairing = AsyncPairingClient(client_wrapper=self._client_wrapper)
         self.projects = AsyncProjectsClient(client_wrapper=self._client_wrapper)
         self.prompts = AsyncPromptsClient(client_wrapper=self._client_wrapper)
+        self.report_failures = AsyncReportFailuresClient(client_wrapper=self._client_wrapper)
+        self.reports = AsyncReportsClient(client_wrapper=self._client_wrapper)
+        self.retention_rules = AsyncRetentionRulesClient(client_wrapper=self._client_wrapper)
         self.service_toggles = AsyncServiceTogglesClient(client_wrapper=self._client_wrapper)
         self.spans = AsyncSpansClient(client_wrapper=self._client_wrapper)
         self.traces = AsyncTracesClient(client_wrapper=self._client_wrapper)
+        self.welcome_wizard = AsyncWelcomeWizardClient(client_wrapper=self._client_wrapper)
+        self.workspace_permissions = AsyncWorkspacePermissionsClient(client_wrapper=self._client_wrapper)
         self.workspaces = AsyncWorkspacesClient(client_wrapper=self._client_wrapper)
         self.redirect = AsyncRedirectClient(client_wrapper=self._client_wrapper)
 

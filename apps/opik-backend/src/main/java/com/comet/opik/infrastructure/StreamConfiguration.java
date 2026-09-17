@@ -16,4 +16,16 @@ public interface StreamConfiguration {
     String getConsumerGroupName();
 
     Duration getPoolingInterval();
+
+    Duration getLongPollingDuration();
+
+    int getClaimIntervalRatio();
+
+    Duration getPendingMessageDuration();
+
+    int getMaxRetries();
+
+    int getStreamMaxLen();
+
+    int getStreamTrimLimit();
 }

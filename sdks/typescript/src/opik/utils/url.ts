@@ -8,8 +8,8 @@
 export const URL_PATHS = {
   REDIRECT_BASE: "v1/session/redirect",
   EXPERIMENTS: "api/v1/session/redirect/experiments/",
-  PROJECTS: "v1/session/redirect/projects/",
-  DATASETS: "v1/session/redirect/datasets/",
+  PROJECTS: "api/v1/session/redirect/projects/",
+  DATASETS: "api/v1/session/redirect/datasets/",
   PROJECT_BY_NAME: "redirect/projects",
 };
 
@@ -47,7 +47,7 @@ const createUrlSafeParams = (params: Record<string, string>): string => {
  * @returns The UI URL with a trailing slash
  */
 export const getUIUrl = (apiUrl: string): string => {
-  return apiUrl.replace(/\/api$/, "");
+  return apiUrl.replace(/\/api\/?$/, "");
 };
 
 /**
@@ -72,8 +72,10 @@ const createUrl = (
   queryParams: Record<string, string>
 ): string => {
   const queryString = createUrlSafeParams(queryParams);
-  const fullPath = `${path}?${queryString}`;
-  return new URL(fullPath, baseUrl).toString();
+  const base = getUIUrl(baseUrl);
+  const normalizedBase = base.endsWith("/") ? base : `${base}/`;
+  const normalizedPath = path.startsWith("/") ? path.slice(1) : path;
+  return `${normalizedBase}${normalizedPath}?${queryString}`;
 };
 
 /**

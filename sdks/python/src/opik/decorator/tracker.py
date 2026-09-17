@@ -31,7 +31,11 @@ class OpikTrackDecorator(base_track_decorator.BaseTrackDecorator):
             for argument in track_options.ignore_arguments:
                 input.pop(argument, None)
 
-        name = track_options.name if track_options.name is not None else func.__name__
+        name = (
+            track_options.name
+            if track_options.name is not None
+            else inspect_helpers.get_function_name(func)
+        )
 
         result = arguments_helpers.StartSpanParameters(
             name=name,
@@ -40,6 +44,7 @@ class OpikTrackDecorator(base_track_decorator.BaseTrackDecorator):
             tags=track_options.tags,
             metadata=track_options.metadata,
             project_name=track_options.project_name,
+            environment=track_options.environment,
         )
 
         return result
@@ -71,7 +76,7 @@ class OpikTrackDecorator(base_track_decorator.BaseTrackDecorator):
 
 
 def flush_tracker(timeout: Optional[int] = None) -> None:
-    opik_ = opik_client.get_client_cached()
+    opik_ = opik_client.get_global_client()
     opik_.flush(timeout)
 
 

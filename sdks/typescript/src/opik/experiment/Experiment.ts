@@ -11,11 +11,15 @@ import { logger } from "@/utils/logger";
 import { serialization } from "@/rest_api";
 import { getExperimentUrlById } from "@/utils/url";
 import { DEFAULT_CONFIG } from "@/config/Config";
+import type { Prompt } from "@/prompt/Prompt";
 
 export interface ExperimentData {
   id?: string;
   name?: string;
-  datasetName: string;
+  datasetName?: string;
+  prompts?: Prompt[];
+  tags?: string[];
+  projectName?: string;
 }
 
 /**
@@ -23,20 +27,55 @@ export interface ExperimentData {
  */
 export class Experiment {
   public readonly id: string;
-  public readonly name?: string;
-  public readonly datasetName: string;
+  private _name?: string;
+  public readonly datasetName?: string;
+  public readonly prompts?: Prompt[];
+  public readonly tags?: string[];
+  public readonly projectName?: string;
 
   /**
    * Creates a new Experiment instance.
    * This should not be created directly, use static factory methods instead.
    */
   constructor(
-    { id, name, datasetName }: ExperimentData,
+    { id, name, datasetName, prompts, tags, projectName }: ExperimentData,
     private opik: OpikClient
   ) {
     this.id = id || generateId();
-    this.name = name;
+    this._name = name;
     this.datasetName = datasetName;
+    this.prompts = prompts;
+    this.tags = tags;
+    this.projectName = projectName;
+  }
+
+  /**
+   * Gets the experiment name. If not provided during construction,
+   * lazy-loads it from the backend API.
+   */
+  get name(): string | undefined {
+    return this._name;
+  }
+
+  /**
+   * Async method to ensure the name is loaded from backend if needed.
+   * Call this method before accessing name if you need to ensure it's loaded.
+   */
+  async ensureNameLoaded(): Promise<string> {
+    if (this._name !== undefined) {
+      return this._name;
+    }
+
+    const experimentData = await this.opik.api.experiments.getExperimentById(
+      this.id
+    );
+    this._name = experimentData.name;
+
+    if (!this._name) {
+      throw new Error("Experiment name is not loaded");
+    }
+
+    return this._name;
   }
 
   /**
@@ -57,6 +96,7 @@ export class Experiment {
         experimentId: this.id,
         datasetItemId: item.datasetItemId,
         traceId: item.traceId,
+        projectName: item.projectName,
       })
     );
 
@@ -166,7 +206,13 @@ export class Experiment {
   }
 
   async getUrl(): Promise<string> {
-    const dataset = await this.opik.getDataset(this.datasetName);
+    if (!this.datasetName) {
+      throw new Error(
+        "Cannot get URL: the associated dataset has been deleted or is unavailable"
+      );
+    }
+
+    const dataset = await this.opik.getDataset(this.datasetName, this.projectName);
     const baseUrl = this.opik.config.apiUrl || DEFAULT_CONFIG.apiUrl;
 
     return getExperimentUrlById({

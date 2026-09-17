@@ -1,43 +1,52 @@
 import { generateId } from "@/utils/generateId";
 import { DatasetItem, DatasetItemData } from "./DatasetItem";
+import { DatasetVersion } from "./DatasetVersion";
+import { getDatasetItems } from "./getDatasetItems";
 import { OpikClient } from "@/client/Client";
-import { DatasetItemPublic, DatasetItemWrite } from "@/rest_api/api";
-import { parseNdjsonStreamToArray, splitIntoBatches } from "@/utils/stream";
+import { DatasetItemWrite, DatasetVersionPublic } from "@/rest_api/api";
+import { splitIntoBatches } from "@/utils/stream";
 import { logger } from "@/utils/logger";
-import { DatasetItemMissingIdError } from "@/errors";
+import {
+  DatasetItemMissingIdError,
+  DatasetVersionNotFoundError,
+} from "@/errors";
 import {
   JsonItemNotObjectError,
   JsonNotArrayError,
   JsonParseError,
 } from "@/errors/common/errors";
-import { serialization } from "@/rest_api";
+import { OpikApiError } from "@/rest_api/errors";
 import stringify from "fast-json-stable-stringify";
 
 export interface DatasetData {
   name: string;
   description?: string;
   id?: string;
+  projectName?: string;
 }
 
 export class Dataset<T extends DatasetItemData = DatasetItemData> {
   public readonly id: string;
   public readonly name: string;
   public readonly description?: string;
+  public readonly projectName?: string;
 
   private idToHash: Map<string, string> = new Map();
   private hashes: Set<string> = new Set();
+  private cachedItemsCount: number | undefined;
 
   /**
    * Configuration object for creating a new Dataset instance.
    * This should not be created directly, use static factory methods instead.
    */
   constructor(
-    { name, description, id }: DatasetData,
-    private opik: OpikClient
+    { name, description, id, projectName }: DatasetData,
+    private opik: OpikClient,
   ) {
     this.id = id || generateId();
     this.name = name;
     this.description = description;
+    this.projectName = projectName;
   }
 
   /**
@@ -52,9 +61,13 @@ export class Dataset<T extends DatasetItemData = DatasetItemData> {
 
     await this.opik.datasetBatchQueue.flush();
 
+    await this.syncHashes();
+
     const reqItems = await this.getDeduplicatedItems(items);
 
     const batches = splitIntoBatches(reqItems, { maxBatchSize: 1000 });
+
+    const batchGroupId = generateId();
 
     try {
       let totalInserted = 0;
@@ -62,18 +75,22 @@ export class Dataset<T extends DatasetItemData = DatasetItemData> {
         await this.opik.api.datasets.createOrUpdateDatasetItems({
           datasetId: this.id,
           items: batch,
+          batchGroupId,
+          projectName: this.projectName,
         });
         totalInserted += batch.length;
         logger.info(
-          `Inserted ${Math.min(totalInserted, reqItems.length)} of ${reqItems.length} items into dataset ${this.id}`
+          `Inserted ${Math.min(totalInserted, reqItems.length)} of ${reqItems.length} items into dataset ${this.id}`,
         );
       }
     } catch (error) {
       logger.error(
-        `Error inserting items into dataset: ${error instanceof Error ? error.message : String(error)}`
+        `Error inserting items into dataset: ${error instanceof Error ? error.message : String(error)}`,
       );
       throw error;
     }
+
+    this.cachedItemsCount = undefined;
   }
 
   /**
@@ -110,10 +127,16 @@ export class Dataset<T extends DatasetItemData = DatasetItemData> {
 
     const batches = splitIntoBatches(itemIds, { maxBatchSize: 100 });
 
+    const batchGroupId = generateId();
+
     for await (const batch of batches) {
-      console.debug(`Deleting dataset items batch: ${batch}`);
+      logger.debug("Deleting dataset items batch", {
+        batchSize: batch.length,
+        datasetId: this.id,
+      });
       await this.opik.api.datasets.deleteDatasetItems({
         itemIds: batch,
+        batchGroupId,
       });
 
       for (const itemId of batch) {
@@ -124,6 +147,8 @@ export class Dataset<T extends DatasetItemData = DatasetItemData> {
         }
       }
     }
+
+    this.cachedItemsCount = undefined;
   }
 
   /**
@@ -141,6 +166,37 @@ export class Dataset<T extends DatasetItemData = DatasetItemData> {
   }
 
   /**
+   * Retrieve the tags associated with this dataset.
+   *
+   * @returns An array of tag strings
+   */
+  public async getTags(): Promise<string[]> {
+    const datasetInfo = await this.opik.api.datasets.getDatasetByIdentifier({
+      datasetName: this.name,
+      projectName: this.projectName,
+    });
+    return datasetInfo.tags ?? [];
+  }
+
+  /**
+   * Retrieve the total number of items in this dataset.
+   * The result is cached and only fetched from the backend on the first call
+   * or after a mutation (insert, delete, clear).
+   *
+   * @returns The item count, or undefined if not available
+   */
+  public async getItemsCount(): Promise<number | undefined> {
+    if (this.cachedItemsCount === undefined) {
+      const datasetInfo = await this.opik.api.datasets.getDatasetByIdentifier({
+        datasetName: this.name,
+        projectName: this.projectName,
+      });
+      this.cachedItemsCount = datasetInfo.datasetItemsCount;
+    }
+    return this.cachedItemsCount;
+  }
+
+  /**
    * Retrieve a fixed number of dataset items.
    *
    * @param nbSamples The number of samples to retrieve. If not set - all items are returned
@@ -148,33 +204,33 @@ export class Dataset<T extends DatasetItemData = DatasetItemData> {
    * @returns A list of objects representing the dataset items
    */
   public async getItems(nbSamples?: number, lastRetrievedId?: string) {
-    const datasetItems = await this.getItemsAsDataclasses(
+    const datasetItems = await getDatasetItems<T>(this.opik, {
+      datasetName: this.name,
+      projectName: this.projectName,
       nbSamples,
-      lastRetrievedId
-    );
+      lastRetrievedId,
+    });
 
     return datasetItems.map((item) => item.getContent(true));
   }
 
-  private async getItemsAsDataclasses(
+  /**
+   * Retrieve raw DatasetItem objects with full metadata (evaluators, executionPolicy) preserved.
+   *
+   * @param nbSamples The number of samples to retrieve. If not set - all items are returned
+   * @param lastRetrievedId Optional ID of the last retrieved item for pagination
+   * @returns A list of DatasetItem objects
+   */
+  public async getRawItems(
     nbSamples?: number,
-    lastRetrievedId?: string
+    lastRetrievedId?: string,
   ): Promise<DatasetItem<T>[]> {
-    const streamLimit = nbSamples ? Math.min(nbSamples, 2000) : 2000; // API max is 2000
-
-    const streamResponse = await this.opik.api.datasets.streamDatasetItems({
+    return getDatasetItems<T>(this.opik, {
       datasetName: this.name,
+      projectName: this.projectName,
+      nbSamples,
       lastRetrievedId,
-      steamLimit: streamLimit,
     });
-
-    const rawItems = await parseNdjsonStreamToArray<DatasetItemPublic>(
-      streamResponse,
-      serialization.DatasetItemPublic,
-      nbSamples
-    );
-
-    return rawItems.map((item) => DatasetItem.fromApiModel(item));
   }
 
   /**
@@ -187,7 +243,7 @@ export class Dataset<T extends DatasetItemData = DatasetItemData> {
   public async insertFromJson(
     jsonArray: string,
     keysMapping: Record<string, string> = {},
-    ignoreKeys: string[] = []
+    ignoreKeys: string[] = [],
   ): Promise<void> {
     let parsedItems: unknown;
 
@@ -238,20 +294,18 @@ export class Dataset<T extends DatasetItemData = DatasetItemData> {
    * @returns A JSON string representation of all items in the dataset
    */
   public async toJson(
-    keysMapping: Record<string, string> = {}
+    keysMapping: Record<string, string> = {},
   ): Promise<string> {
     const items = await this.getItems();
 
     const mappedItems: Record<string, unknown>[] = items.map((item) => {
       const itemCopy = { ...item } as Record<string, unknown>;
 
-      if (Object.keys(keysMapping).length > 0) {
-        for (const [key, value] of Object.entries(keysMapping)) {
-          if (key in itemCopy) {
-            const content = itemCopy[key];
-            delete itemCopy[key];
-            itemCopy[value] = content;
-          }
+      for (const [key, value] of Object.entries(keysMapping)) {
+        if (key in itemCopy) {
+          const content = itemCopy[key];
+          delete itemCopy[key];
+          itemCopy[value] = content;
         }
       }
 
@@ -274,9 +328,10 @@ export class Dataset<T extends DatasetItemData = DatasetItemData> {
       const contentHash = await datasetItem.contentHash();
 
       if (this.hashes.has(contentHash)) {
-        console.debug(
-          `Duplicate item found with hash: ${contentHash} - ignored the event`
-        );
+        logger.debug("Duplicate item found - skipping", {
+          contentHash,
+          datasetId: this.id,
+        });
         continue;
       }
 
@@ -288,17 +343,122 @@ export class Dataset<T extends DatasetItemData = DatasetItemData> {
     return deduplicatedItems;
   }
 
-  public async syncHashes(): Promise<void> {
-    console.debug("Start hash sync in dataset");
-    const allItems = await this.getItemsAsDataclasses();
-
+  /**
+   * Clears both hash tracking data structures
+   */
+  private clearHashState(): void {
     this.idToHash.clear();
     this.hashes.clear();
+  }
 
-    for (const item of allItems) {
-      const itemHash = await item.contentHash();
-      this.idToHash.set(item.id, itemHash);
-      this.hashes.add(itemHash);
+  public async syncHashes(): Promise<void> {
+    logger.debug("Syncing dataset hashes with backend", { datasetId: this.id });
+
+    try {
+      const allItems = await getDatasetItems<T>(this.opik, {
+        datasetName: this.name,
+        projectName: this.projectName,
+      });
+
+      this.clearHashState();
+
+      for (const item of allItems) {
+        const itemHash = await item.contentHash();
+        this.idToHash.set(item.id, itemHash);
+        this.hashes.add(itemHash);
+      }
+
+      logger.debug("Dataset hash sync completed", {
+        datasetId: this.id,
+        itemCount: allItems.length,
+      });
+    } catch (error) {
+      if (error instanceof OpikApiError && error.statusCode === 404) {
+        logger.debug("Dataset not found - starting with empty hash state", {
+          datasetId: this.id,
+        });
+        this.clearHashState();
+        return;
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Get a read-only view of a specific dataset version.
+   *
+   * @param versionName The version name to retrieve (e.g., "v1", "v2")
+   * @returns A DatasetVersion object for the specified version
+   * @throws DatasetVersionNotFoundError if the version doesn't exist
+   */
+  public async getVersionView(versionName: string): Promise<DatasetVersion<T>> {
+    const versionInfo = await this.findVersionByName(versionName);
+
+    if (!versionInfo) {
+      throw new DatasetVersionNotFoundError(versionName, this.name);
+    }
+
+    return new DatasetVersion<T>(this.name, this.id, versionInfo, this.opik);
+  }
+
+  /**
+   * Get the current (latest) version name.
+   *
+   * @returns The version name (e.g., "v1") or undefined if no versions exist
+   */
+  public async getCurrentVersionName(): Promise<string | undefined> {
+    const versionInfo = await this.getVersionInfo();
+    return versionInfo?.versionName;
+  }
+
+  /**
+   * Get the current (latest) version info.
+   *
+   * @returns The DatasetVersionPublic object or undefined if no versions exist
+   */
+  public async getVersionInfo(): Promise<DatasetVersionPublic | undefined> {
+    try {
+      const response = await this.opik.api.datasets.listDatasetVersions(
+        this.id,
+        { page: 1, size: 1 },
+      );
+
+      const versions = response.content ?? [];
+      if (versions.length === 0) {
+        return undefined;
+      }
+
+      return versions[0];
+    } catch (error) {
+      if (error instanceof OpikApiError && error.statusCode === 404) {
+        return undefined;
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Find a version by its name (e.g., "v1", "v2").
+   *
+   * @param versionName The version name to find
+   * @returns The DatasetVersionPublic or undefined if not found
+   */
+  private async findVersionByName(
+    versionName: string,
+  ): Promise<DatasetVersionPublic | undefined> {
+    try {
+      const response = await this.opik.api.datasets.retrieveDatasetVersion(
+        this.id,
+        {
+          versionName,
+        },
+      );
+      return response;
+    } catch (error) {
+      if (error instanceof OpikApiError && error.statusCode === 404) {
+        return undefined;
+      }
+      throw error;
     }
   }
 }

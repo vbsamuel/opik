@@ -16,6 +16,7 @@ import com.comet.opik.domain.stats.StatsMapper;
 import com.comet.opik.utils.ValidationUtils;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.google.common.math.Quantiles;
+import org.apache.commons.collections4.CollectionUtils;
 import org.assertj.core.api.recursive.comparison.RecursiveComparisonConfiguration;
 import org.junit.platform.commons.util.StringUtils;
 
@@ -42,6 +43,7 @@ import static java.util.stream.Collectors.groupingBy;
 import static java.util.stream.Collectors.mapping;
 import static java.util.stream.Collectors.toList;
 import static java.util.stream.Collectors.toMap;
+import static org.assertj.core.api.Assertions.assertThat;
 
 public class StatsUtils {
 
@@ -66,9 +68,10 @@ public class StatsUtils {
     }
 
     public static List<ProjectStatItem<?>> getProjectTraceStatItems(List<Trace> expectedTraces) {
-        return getProjectStatItems(expectedTraces,
+        var stats = getProjectStatItems(expectedTraces,
                 expectedTraces.stream().map(Trace::usage).toList(),
                 expectedTraces.stream().map(Trace::feedbackScores).toList(),
+                expectedTraces.stream().map(Trace::spanFeedbackScores).toList(),
                 Trace::input,
                 Trace::output,
                 Trace::metadata,
@@ -77,9 +80,16 @@ public class StatsUtils {
                 Trace::endTime,
                 Trace::totalEstimatedCost,
                 Trace::llmSpanCount,
+                Trace::spanCount,
                 Trace::guardrailsValidations,
                 Trace::errorInfo,
                 "trace_count");
+
+        if (CollectionUtils.isNotEmpty(expectedTraces)) {
+            stats.add(new CountValueStat(StatsMapper.THREAD_COUNT, calculateExpectedThreadCount(expectedTraces)));
+        }
+
+        return stats;
     }
 
     public static List<ProjectStatItem<?>> getProjectSpanStatItems(List<Span> expectedSpans) {
@@ -94,6 +104,7 @@ public class StatsUtils {
         return getProjectStatItems(expectedSpans,
                 list,
                 expectedSpans.stream().map(Span::feedbackScores).toList(),
+                null, // Spans don't have span feedback scores
                 Span::input,
                 Span::output,
                 Span::metadata,
@@ -121,14 +132,25 @@ public class StatsUtils {
                 },
                 null,
                 null,
+                null,
                 Span::errorInfo,
                 "span_count");
+    }
+
+    private static long calculateExpectedThreadCount(List<Trace> traces) {
+        return traces.stream()
+                .map(Trace::threadId)
+                .filter(Objects::nonNull)
+                .filter(threadId -> !threadId.isEmpty())
+                .distinct()
+                .count();
     }
 
     private static <T> List<ProjectStatItem<?>> getProjectStatItems(
             List<T> expectedEntities,
             List<Map<String, Long>> usages,
             List<List<FeedbackScore>> feedbacks,
+            List<List<FeedbackScore>> spanFeedbacks,
             Function<T, JsonNode> inputProvider,
             Function<T, JsonNode> outputProvider,
             Function<T, JsonNode> metadataProvider,
@@ -137,6 +159,7 @@ public class StatsUtils {
             Function<T, Instant> endProvider,
             Function<T, BigDecimal> totalEstimatedCostProvider,
             Function<T, Integer> llmSpanCountProvider,
+            Function<T, Integer> spanCountProvider,
             Function<T, List<GuardrailsValidation>> guardrailsProvider,
             Function<T, ErrorInfo> errorProvider,
             String countLabel) {
@@ -154,6 +177,7 @@ public class StatsUtils {
         BigDecimal totalEstimatedCost = BigDecimal.ZERO;
         int countEstimatedCost = 0;
         int llmSpanCount = 0;
+        int spanCount = 0;
         long errorCount = 0;
 
         for (T entity : expectedEntities) {
@@ -165,6 +189,9 @@ public class StatsUtils {
 
             llmSpanCount += llmSpanCountProvider != null &&
                     llmSpanCountProvider.apply(entity) != null ? llmSpanCountProvider.apply(entity) : 0;
+
+            spanCount += spanCountProvider != null &&
+                    spanCountProvider.apply(entity) != null ? spanCountProvider.apply(entity) : 0;
 
             BigDecimal cost = totalEstimatedCostProvider.apply(entity) != null
                     ? totalEstimatedCostProvider.apply(entity)
@@ -187,6 +214,9 @@ public class StatsUtils {
 
         Map<String, Double> usage = calculateUsageAverage(usages);
         Map<String, Double> feedback = calculateFeedbackAverage(feedbacks);
+        Map<String, Double> spanFeedback = spanFeedbacks != null
+                ? calculateFeedbackAverage(spanFeedbacks)
+                : Map.of();
 
         stats.add(new CountValueStat(countLabel, input));
         if (!quantities.isEmpty()) {
@@ -223,6 +253,11 @@ public class StatsUtils {
             stats.add(new AvgValueStat(StatsMapper.LLM_SPAN_COUNT, avgLlmSpanCount));
         }
 
+        if (spanCountProvider != null) {
+            var avgSpanCount = spanCount == 0 ? 0 : (double) spanCount / expectedEntities.size();
+            stats.add(new AvgValueStat(StatsMapper.SPAN_COUNT, avgSpanCount));
+        }
+
         stats.add(new AvgValueStat(StatsMapper.TOTAL_ESTIMATED_COST, totalEstimatedCostValue.doubleValue()));
         stats.add(new AvgValueStat(StatsMapper.TOTAL_ESTIMATED_COST_SUM, totalEstimatedCost.doubleValue()));
 
@@ -232,6 +267,8 @@ public class StatsUtils {
                 .forEach(key -> stats
                         .add(new AvgValueStat("%s.%s".formatted(StatsMapper.USAGE, key), usage.get(key))));
 
+        stats.addAll(calculateUsageSum(usages));
+
         feedback.keySet()
                 .stream()
                 .sorted()
@@ -239,12 +276,41 @@ public class StatsUtils {
                         .add(new AvgValueStat("%s.%s".formatted(StatsMapper.FEEDBACK_SCORE, key),
                                 feedback.get(key))));
 
+        // Only add span feedback scores statistics for traces (not spans) when there are actual values
+        if (spanFeedbacks != null && countLabel.equals("trace_count") && !spanFeedback.isEmpty()) {
+            spanFeedback.keySet()
+                    .stream()
+                    .sorted()
+                    .forEach(key -> stats
+                            .add(new AvgValueStat("%s.%s".formatted(StatsMapper.SPAN_FEEDBACK_SCORE, key),
+                                    spanFeedback.get(key))));
+        }
+
         Optional.ofNullable(failedGuardrails).ifPresent(failedGuardrailCount -> stats
                 .add(new CountValueStat(StatsMapper.GUARDRAILS_FAILED_COUNT, failedGuardrailCount)));
 
         stats.add(new CountValueStat(StatsMapper.ERROR_COUNT, errorCount));
 
         return stats;
+    }
+
+    public static List<AvgValueStat> calculateUsageSum(List<Map<String, Long>> data) {
+        return data.stream()
+                .filter(Objects::nonNull)
+                .map(Map::entrySet)
+                .flatMap(Collection::stream)
+                .collect(groupingBy(
+                        Map.Entry::getKey,
+                        mapping(Map.Entry::getValue, toList())))
+                .entrySet()
+                .stream()
+                .sorted(Map.Entry.comparingByKey())
+                .map(e -> (AvgValueStat) AvgValueStat.builder()
+                        .name("%s.%s".formatted(StatsMapper.USAGE_SUM, e.getKey()))
+                        .value(e.getValue().stream().mapToDouble(Long::doubleValue).sum())
+                        .type(ProjectStats.StatsType.AVG)
+                        .build())
+                .toList();
     }
 
     public static Map<String, Double> calculateUsageAverage(List<Map<String, Long>> data) {
@@ -295,7 +361,7 @@ public class StatsUtils {
                 .reduce(0.0, Double::sum) / values.size();
     }
 
-    private static Double avgFromList(List<BigDecimal> values) {
+    public static Double avgFromList(List<BigDecimal> values) {
         return values.stream()
                 .reduce(BigDecimal.ZERO, BigDecimal::add)
                 .doubleValue() / values.size();
@@ -335,6 +401,23 @@ public class StatsUtils {
 
             return 1;
         };
+    }
+
+    public static int compareDoubles(Double d1, Double d2) {
+        if (d1 == null && d2 == null) return 0;
+        if (d1 == null) return -1;
+        if (d2 == null) return 1;
+        return Math.abs(d1 - d2) < 1e-6 ? 0 : Double.compare(d1, d2);
+    }
+
+    /**
+     * Asserts two BigDecimals are equal, tolerating the scale differences that come back from ClickHouse.
+     * Both values must be present - a null on either side is a failure rather than a match.
+     */
+    public static void assertBigDecimalEquals(BigDecimal actual, BigDecimal expected) {
+        assertThat(actual).isNotNull();
+        assertThat(expected).isNotNull();
+        assertThat(bigDecimalComparator(actual, expected)).isZero();
     }
 
     public static int bigDecimalComparator(BigDecimal v1, BigDecimal v2) {

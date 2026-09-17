@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from opik.evaluation.metrics.heuristics import equals
@@ -44,8 +46,64 @@ def test_metric_equals__track_enabled__happyflow(fake_backend):
                 start_time=ANY_BUT_NONE,
                 end_time=ANY_BUT_NONE,
                 spans=[],
+                source="sdk",
             )
         ],
+        source="sdk",
+    )
+
+    assert len(fake_backend.trace_trees) == 1
+
+    assert_equal(EXPECTED_TRACE_TREE, fake_backend.trace_trees[0])
+
+
+def test_metric_equals__track_enabled__ascore__score_span_nested_under_ascore_span(
+    fake_backend,
+):
+    metric = equals.Equals(name="equals_metric", track=True)
+
+    score_result = asyncio.run(metric.ascore(output="123", reference="345")).__dict__
+
+    tracker.flush_tracker()
+
+    EXPECTED_TRACE_TREE = TraceModel(
+        id=ANY_BUT_NONE,
+        name="equals_metric",
+        input={"args": [], "kwargs": {"output": "123", "reference": "345"}},
+        output={"output": score_result},
+        start_time=ANY_BUT_NONE,
+        end_time=ANY_BUT_NONE,
+        last_updated_at=ANY_BUT_NONE,
+        spans=[
+            SpanModel(
+                id=ANY_BUT_NONE,
+                name="equals_metric",
+                input={"args": [], "kwargs": {"output": "123", "reference": "345"}},
+                output={"output": score_result},
+                start_time=ANY_BUT_NONE,
+                end_time=ANY_BUT_NONE,
+                source="sdk",
+                # The default ascore dispatches score() to a worker thread; the
+                # span it opens there must still land under the ascore span.
+                spans=[
+                    SpanModel(
+                        id=ANY_BUT_NONE,
+                        name="equals_metric",
+                        input={
+                            "output": "123",
+                            "reference": "345",
+                            "ignored_kwargs": {},
+                        },
+                        output={"output": score_result},
+                        start_time=ANY_BUT_NONE,
+                        end_time=ANY_BUT_NONE,
+                        spans=[],
+                        source="sdk",
+                    )
+                ],
+            )
+        ],
+        source="sdk",
     )
 
     assert len(fake_backend.trace_trees) == 1
@@ -93,8 +151,10 @@ def test_metric_equals__track_enabled__project_name_set__data_logged_to_the_spec
                 end_time=ANY_BUT_NONE,
                 project_name="metric-project-name",
                 spans=[],
+                source="sdk",
             )
         ],
+        source="sdk",
     )
 
     assert len(fake_backend.trace_trees) == 1

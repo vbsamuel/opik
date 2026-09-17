@@ -1,90 +1,184 @@
+#!/usr/bin/env python3
+"""Unified benchmark runner powered by pluggable execution engines."""
+
+from __future__ import annotations
+
 import argparse
-from typing import List, Optional
+import os
+from typing import Any
 
-import benchmark_config
-import benchmark_runner
-import validation
+from rich import box
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
 
-DEFAULT_MAX_WORKERS: int = 3
-DEFAULT_SEED: int = 42
-DEFAULT_CHECKPOINT_DIR: str = "./benchmark_results"
+from benchmarks.packages import registry as benchmark_config
+from benchmarks.core.planning import PlanInput, compile_task_plan
+from benchmarks.core.runtime import deploy_engine, run_plan
+from benchmarks.core.types import TaskSpec
+from benchmarks.engines.registry import list_engines
 
-
-def run_benchmark(
-    demo_datasets: Optional[List[str]] = None,
-    optimizers: Optional[List[str]] = None,
-    models: Optional[List[str]] = None,
-    max_workers: int = DEFAULT_MAX_WORKERS,
-    seed: int = DEFAULT_SEED,
-    test_mode: bool = False,
-    checkpoint_dir: str = DEFAULT_CHECKPOINT_DIR,
-    retry_failed_run_id: Optional[str] = None,
-    resume_run_id: Optional[str] = None,
-) -> None:
-    if demo_datasets is not None and not isinstance(demo_datasets, list):
-        raise ValueError("demo_datasets must be a list of strings")
-
-    if optimizers is not None and not isinstance(optimizers, list):
-        raise ValueError("optimizers must be a list of strings")
-
-    if models is not None and not isinstance(models, list):
-        raise ValueError("models must be a list of strings")
-
-    # To avoid running many benchmarks, confirm the user actions
-    validation.ask_for_input_confirmation(
-        demo_datasets=demo_datasets,
-        optimizers=optimizers,
-        test_mode=test_mode,
-        retry_failed_run_id=retry_failed_run_id,
-        resume_run_id=resume_run_id,
-    )
-
-    # Get default configurations
-    if demo_datasets is None:
-        demo_datasets = list(benchmark_config.DATASET_CONFIG.keys())
-
-    if optimizers is None:
-        optimizers = list(benchmark_config.OPTIMIZER_CONFIGS.keys())
-
-    if models is None:
-        models = benchmark_config.MODELS
-
-    runner = benchmark_runner.BenchmarkRunner(
-        max_workers=max_workers,
-        seed=seed,
-        test_mode=test_mode,
-        checkpoint_dir=checkpoint_dir,
-    )
-
-    runner.run_benchmarks(
-        demo_datasets, optimizers, models, retry_failed_run_id, resume_run_id
-    )
+try:
+    from opik_optimizer.constants import DEFAULT_BENCHMARK_MAX_CONCURRENT
+except Exception:
+    DEFAULT_BENCHMARK_MAX_CONCURRENT = 5
 
 
-if __name__ == "__main__":
+def _print_manifest_summary(tasks: list[TaskSpec], console: Console) -> None:
+    table = Table(title="Manifest Summary", box=None, padding=(0, 1))
+    table.add_column("Dataset", no_wrap=True)
+    table.add_column("Splits", no_wrap=False)
+    table.add_column("Optimizer", no_wrap=True)
+    table.add_column("Model", no_wrap=True)
+    table.add_column("max_trials", no_wrap=True)
+    table.add_column("n_samples", no_wrap=True)
+
+    warnings: list[str] = []
+
+    for task in tasks:
+        splits: list[str] = []
+        ds_conf = task.datasets or {}
+        for role in ("train", "validation", "test"):
+            role_conf = ds_conf.get(role)
+            if role_conf:
+                count = role_conf.get("count")
+                name = role_conf.get("dataset_name") or role_conf.get("loader") or role
+                splits.append(f"{role}={name}({count if count is not None else '-'})")
+            else:
+                splits.append(f"{role}=None")
+        splits_text = ", ".join(splits)
+
+        max_trials = "-"
+        n_samples = "-"
+        if task.optimizer_prompt_params:
+            if task.optimizer_prompt_params.get("max_trials") is not None:
+                max_trials = str(task.optimizer_prompt_params.get("max_trials"))
+            else:
+                warnings.append(
+                    f"{task.dataset_name}/{task.optimizer_name}: missing max_trials"
+                )
+            if task.optimizer_prompt_params.get("n_samples") is not None:
+                n_samples = str(task.optimizer_prompt_params.get("n_samples"))
+
+        table.add_row(
+            task.dataset_name,
+            splits_text,
+            task.optimizer_name,
+            task.model_name,
+            max_trials,
+            n_samples,
+        )
+
+    console.print(table)
+    if warnings:
+        console.print(
+            Panel("\n".join(warnings), title="Warnings", border_style="yellow")
+        )
+
+
+def _print_registry(console: Console) -> None:
+    split_suffixes = {"train": "_train", "validation": "_validation", "test": "_test"}
+    dataset_groups: dict[str, dict[str, Any]] = {}
+
+    for name, cfg in benchmark_config.DATASET_CONFIG.items():
+        base = name
+        split = None
+        for role, suffix in split_suffixes.items():
+            if name.endswith(suffix):
+                base = name[: -len(suffix)]
+                split = role
+                break
+        info = dataset_groups.setdefault(
+            base,
+            {
+                "display_name": cfg.display_name,
+                "metrics": {m.__name__ for m in cfg.metrics},
+                "splits": set(),
+            },
+        )
+        info["splits"].add(split or "default")
+        info["metrics"].update(m.__name__ for m in cfg.metrics)
+
+    ds_table = Table(title="Datasets", box=box.SIMPLE, expand=True)
+    ds_table.add_column("Name")
+    ds_table.add_column("Splits")
+    ds_table.add_column("Metrics")
+    ds_table.add_column("Display")
+    for base, info in sorted(dataset_groups.items()):
+        ds_table.add_row(
+            base,
+            ", ".join(sorted(info["splits"])),
+            ", ".join(sorted(info["metrics"])),
+            info["display_name"],
+        )
+
+    opt_table = Table(title="Optimizers", box=box.SIMPLE, expand=True)
+    opt_table.add_column("Name")
+    opt_table.add_column("Class")
+    opt_table.add_column("Params")
+    opt_table.add_column("Prompt Params")
+    for name, cfg in sorted(benchmark_config.OPTIMIZER_CONFIGS.items()):
+        opt_table.add_row(
+            name,
+            cfg.class_name,
+            ", ".join(sorted(cfg.params.keys())) or "[dim]-[/dim]",
+            ", ".join(sorted(cfg.optimizer_prompt_params.keys())) or "[dim]-[/dim]",
+        )
+
+    engine_table = Table(title="Engines", box=box.SIMPLE, expand=True)
+    engine_table.add_column("Engine")
+    for name in list_engines():
+        engine_table.add_row(name)
+
+    console.print(Panel(ds_table, title="Dataset Registry", border_style="cyan"))
+    console.print(Panel(opt_table, title="Optimizer Registry", border_style="cyan"))
+    console.print(Panel(engine_table, title="Engine Registry", border_style="cyan"))
+
+
+def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Run benchmarks for prompt optimization"
+        description="Run benchmarks for prompt optimization using pluggable engines",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+
+    parser.add_argument(
+        "--engine",
+        type=str,
+        choices=list_engines(),
+        default="local",
+        help="Benchmark engine to use",
+    )
+    parser.add_argument(
+        "--modal",
+        action="store_true",
+        help="Alias for --engine modal",
+    )
+    parser.add_argument(
+        "--deploy-engine",
+        action="store_true",
+        help="Deploy engine infrastructure (if supported) and exit",
+    )
+
     parser.add_argument(
         "--demo-datasets",
         type=str,
         nargs="*",
         default=None,
-        help=f"Space-separated list of dataset keys to run. Available: {list(benchmark_config.DATASET_CONFIG.keys())}",
+        help=f"Dataset names to benchmark. Available: {list(benchmark_config.DATASET_CONFIG.keys())}",
     )
     parser.add_argument(
         "--optimizers",
         type=str,
         nargs="*",
         default=None,
-        help=f"Space-separated list of optimizer keys to run. Available: {list(benchmark_config.OPTIMIZER_CONFIGS.keys())}",
+        help=f"Optimizer names to benchmark. Available: {list(benchmark_config.OPTIMIZER_CONFIGS.keys())}",
     )
     parser.add_argument(
         "--models",
         type=str,
         nargs="*",
         default=None,
-        help=f"Space-separated list of model keys to run. Available: {list(benchmark_config.MODELS)}",
+        help=f"Model names to benchmark. Available: {benchmark_config.MODELS}",
     )
     parser.add_argument(
         "--test-mode",
@@ -92,47 +186,77 @@ if __name__ == "__main__":
         default=False,
         help="Run in test mode with 5 examples per dataset",
     )
+    parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
-        "--seed", type=int, default=DEFAULT_SEED, help="Random seed for reproducibility"
+        "--max-concurrent",
+        type=int,
+        default=DEFAULT_BENCHMARK_MAX_CONCURRENT,
     )
-
     parser.add_argument(
         "--checkpoint-dir",
         type=str,
-        default=DEFAULT_CHECKPOINT_DIR,
-        help="Directory to save benchmark results",
+        default=os.path.join(
+            os.path.expanduser("~"), ".opik_optimizer", "benchmark_results"
+        ),
     )
+    parser.add_argument("--retry-failed-run-id", type=str, default=None)
+    parser.add_argument("--resume-run-id", type=str, default=None)
+    parser.add_argument("--config", type=str, default=None)
     parser.add_argument(
-        "--max-workers",
-        type=int,
-        default=DEFAULT_MAX_WORKERS,
-        help="Maximum number of worker threads",
+        "--yes",
+        action="store_true",
+        default=False,
+        help="Skip interactive confirmation prompts for large local runs",
     )
-
-    parser.add_argument(
-        "--retry-failed-run-id",
-        type=str,
-        default=None,
-        metavar="RUN_ID",
-        help="Specify a previous RUN_ID to retry only its failed tasks. Successful tasks from that run will be skipped.",
-    )
-    parser.add_argument(
-        "--resume-run-id",
-        type=str,
-        default=None,
-        metavar="RUN_ID",
-        help="Specify a previous RUN_ID to resume from. Successful tasks from that run will be skipped.",
-    )
+    parser.add_argument("--list-registries", action="store_true")
     args = parser.parse_args()
 
-    run_benchmark(
-        demo_datasets=args.demo_datasets,
-        optimizers=args.optimizers,
-        models=args.models,
-        max_workers=args.max_workers,
-        seed=args.seed,
-        test_mode=args.test_mode,
-        checkpoint_dir=args.checkpoint_dir,
-        retry_failed_run_id=args.retry_failed_run_id,
-        resume_run_id=args.resume_run_id,
+    console = Console()
+    if args.list_registries:
+        _print_registry(console)
+        return
+
+    engine_name = "modal" if args.modal else args.engine
+
+    plan = compile_task_plan(
+        PlanInput(
+            demo_datasets=args.demo_datasets,
+            optimizers=args.optimizers,
+            models=args.models,
+            seed=args.seed,
+            test_mode=args.test_mode,
+            max_concurrent=args.max_concurrent,
+            checkpoint_dir=args.checkpoint_dir,
+            auto_confirm=args.yes,
+            config_path=args.config,
+            retry_failed_run_id=args.retry_failed_run_id,
+            resume_run_id=args.resume_run_id,
+        )
     )
+
+    if plan.manifest_path:
+        _print_manifest_summary(plan.tasks, console)
+
+    if args.deploy_engine:
+        summary = deploy_engine(engine_name)
+        console.print(
+            Panel(
+                f"Engine '{summary.engine}' deployed.\n{summary.metadata}",
+                title="Deployment",
+                border_style="green",
+            )
+        )
+        return
+
+    summary = run_plan(engine_name, plan)
+    console.print(
+        Panel(
+            f"Engine: {summary.engine}\nRun ID: {summary.run_id or 'n/a'}\nStatus: {summary.status}",
+            title="Run Complete",
+            border_style="green" if summary.status == "succeeded" else "red",
+        )
+    )
+
+
+if __name__ == "__main__":
+    main()

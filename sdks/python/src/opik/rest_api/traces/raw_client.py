@@ -7,6 +7,7 @@ from json.decoder import JSONDecodeError
 
 from ..core.api_error import ApiError
 from ..core.client_wrapper import AsyncClientWrapper, SyncClientWrapper
+from ..core.datetime_utils import serialize_datetime
 from ..core.http_response import AsyncHttpResponse, HttpResponse
 from ..core.jsonable_encoder import jsonable_encoder
 from ..core.pydantic_utilities import parse_obj_as
@@ -15,16 +16,17 @@ from ..core.serialization import convert_and_respect_annotation_metadata
 from ..errors.bad_request_error import BadRequestError
 from ..errors.not_found_error import NotFoundError
 from ..errors.unauthorized_error import UnauthorizedError
+from ..errors.unprocessable_entity_error import UnprocessableEntityError
 from ..types.comment import Comment
 from ..types.error_info import ErrorInfo
 from ..types.error_info_write import ErrorInfoWrite
+from ..types.existence_response import ExistenceResponse
 from ..types.feedback_score_batch_item import FeedbackScoreBatchItem
 from ..types.feedback_score_batch_item_thread import FeedbackScoreBatchItemThread
+from ..types.feedback_score_names_public import FeedbackScoreNamesPublic
 from ..types.feedback_score_source import FeedbackScoreSource
 from ..types.json_list_string import JsonListString
 from ..types.json_list_string_write import JsonListStringWrite
-from ..types.json_node import JsonNode
-from ..types.json_node_write import JsonNodeWrite
 from ..types.project_stats_public import ProjectStatsPublic
 from ..types.trace_filter_public import TraceFilterPublic
 from ..types.trace_page_public import TracePagePublic
@@ -32,7 +34,13 @@ from ..types.trace_public import TracePublic
 from ..types.trace_thread import TraceThread
 from ..types.trace_thread_filter import TraceThreadFilter
 from ..types.trace_thread_page import TraceThreadPage
+from ..types.trace_thread_update import TraceThreadUpdate
+from ..types.trace_update import TraceUpdate
+from ..types.trace_update_source import TraceUpdateSource
 from ..types.trace_write import TraceWrite
+from ..types.trace_write_source import TraceWriteSource
+from ..types.value_entry import ValueEntry
+from .types.trace_search_stream_request_public_exclude_item import TraceSearchStreamRequestPublicExcludeItem
 
 # this is used as the default value for optional parameters
 OMIT = typing.cast(typing.Any, ...)
@@ -48,6 +56,7 @@ class RawTracesClient:
         *,
         text: str,
         id: typing.Optional[str] = OMIT,
+        source_queue_id: typing.Optional[str] = OMIT,
         created_at: typing.Optional[dt.datetime] = OMIT,
         last_updated_at: typing.Optional[dt.datetime] = OMIT,
         created_by: typing.Optional[str] = OMIT,
@@ -64,6 +73,8 @@ class RawTracesClient:
         text : str
 
         id : typing.Optional[str]
+
+        source_queue_id : typing.Optional[str]
 
         created_at : typing.Optional[dt.datetime]
 
@@ -86,6 +97,7 @@ class RawTracesClient:
             json={
                 "id": id,
                 "text": text,
+                "source_queue_id": source_queue_id,
                 "created_at": created_at,
                 "last_updated_at": last_updated_at,
                 "created_by": created_by,
@@ -111,6 +123,7 @@ class RawTracesClient:
         *,
         text: str,
         id: typing.Optional[str] = OMIT,
+        source_queue_id: typing.Optional[str] = OMIT,
         created_at: typing.Optional[dt.datetime] = OMIT,
         last_updated_at: typing.Optional[dt.datetime] = OMIT,
         created_by: typing.Optional[str] = OMIT,
@@ -127,6 +140,8 @@ class RawTracesClient:
         text : str
 
         id : typing.Optional[str]
+
+        source_queue_id : typing.Optional[str]
 
         created_at : typing.Optional[dt.datetime]
 
@@ -149,6 +164,7 @@ class RawTracesClient:
             json={
                 "id": id,
                 "text": text,
+                "source_queue_id": source_queue_id,
                 "created_at": created_at,
                 "last_updated_at": last_updated_at,
                 "created_by": created_by,
@@ -177,10 +193,12 @@ class RawTracesClient:
         source: FeedbackScoreSource,
         category_name: typing.Optional[str] = OMIT,
         reason: typing.Optional[str] = OMIT,
+        source_queue_id: typing.Optional[str] = OMIT,
         created_at: typing.Optional[dt.datetime] = OMIT,
         last_updated_at: typing.Optional[dt.datetime] = OMIT,
         created_by: typing.Optional[str] = OMIT,
         last_updated_by: typing.Optional[str] = OMIT,
+        value_by_author: typing.Optional[typing.Dict[str, ValueEntry]] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> HttpResponse[None]:
         """
@@ -200,6 +218,8 @@ class RawTracesClient:
 
         reason : typing.Optional[str]
 
+        source_queue_id : typing.Optional[str]
+
         created_at : typing.Optional[dt.datetime]
 
         last_updated_at : typing.Optional[dt.datetime]
@@ -207,6 +227,8 @@ class RawTracesClient:
         created_by : typing.Optional[str]
 
         last_updated_by : typing.Optional[str]
+
+        value_by_author : typing.Optional[typing.Dict[str, ValueEntry]]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -224,232 +246,14 @@ class RawTracesClient:
                 "value": value,
                 "reason": reason,
                 "source": source,
+                "source_queue_id": source_queue_id,
                 "created_at": created_at,
                 "last_updated_at": last_updated_at,
                 "created_by": created_by,
                 "last_updated_by": last_updated_by,
-            },
-            headers={
-                "content-type": "application/json",
-            },
-            request_options=request_options,
-            omit=OMIT,
-        )
-        try:
-            if 200 <= _response.status_code < 300:
-                return HttpResponse(response=_response, data=None)
-            _response_json = _response.json()
-        except JSONDecodeError:
-            raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
-        raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
-
-    def close_trace_thread(
-        self,
-        *,
-        thread_id: str,
-        project_name: typing.Optional[str] = OMIT,
-        project_id: typing.Optional[str] = OMIT,
-        request_options: typing.Optional[RequestOptions] = None,
-    ) -> HttpResponse[None]:
-        """
-        Close trace thread
-
-        Parameters
-        ----------
-        thread_id : str
-
-        project_name : typing.Optional[str]
-
-        project_id : typing.Optional[str]
-
-        request_options : typing.Optional[RequestOptions]
-            Request-specific configuration.
-
-        Returns
-        -------
-        HttpResponse[None]
-        """
-        _response = self._client_wrapper.httpx_client.request(
-            "v1/private/traces/threads/close",
-            method="PUT",
-            json={
-                "project_name": project_name,
-                "project_id": project_id,
-                "thread_id": thread_id,
-            },
-            headers={
-                "content-type": "application/json",
-            },
-            request_options=request_options,
-            omit=OMIT,
-        )
-        try:
-            if 200 <= _response.status_code < 300:
-                return HttpResponse(response=_response, data=None)
-            if _response.status_code == 404:
-                raise NotFoundError(
-                    headers=dict(_response.headers),
-                    body=typing.cast(
-                        typing.Optional[typing.Any],
-                        parse_obj_as(
-                            type_=typing.Optional[typing.Any],  # type: ignore
-                            object_=_response.json(),
-                        ),
-                    ),
-                )
-            _response_json = _response.json()
-        except JSONDecodeError:
-            raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
-        raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
-
-    def get_traces_by_project(
-        self,
-        *,
-        page: typing.Optional[int] = None,
-        size: typing.Optional[int] = None,
-        project_name: typing.Optional[str] = None,
-        project_id: typing.Optional[str] = None,
-        filters: typing.Optional[str] = None,
-        truncate: typing.Optional[bool] = None,
-        sorting: typing.Optional[str] = None,
-        exclude: typing.Optional[str] = None,
-        request_options: typing.Optional[RequestOptions] = None,
-    ) -> HttpResponse[TracePagePublic]:
-        """
-        Get traces by project_name or project_id
-
-        Parameters
-        ----------
-        page : typing.Optional[int]
-
-        size : typing.Optional[int]
-
-        project_name : typing.Optional[str]
-
-        project_id : typing.Optional[str]
-
-        filters : typing.Optional[str]
-
-        truncate : typing.Optional[bool]
-
-        sorting : typing.Optional[str]
-
-        exclude : typing.Optional[str]
-
-        request_options : typing.Optional[RequestOptions]
-            Request-specific configuration.
-
-        Returns
-        -------
-        HttpResponse[TracePagePublic]
-            Trace resource
-        """
-        _response = self._client_wrapper.httpx_client.request(
-            "v1/private/traces",
-            method="GET",
-            params={
-                "page": page,
-                "size": size,
-                "project_name": project_name,
-                "project_id": project_id,
-                "filters": filters,
-                "truncate": truncate,
-                "sorting": sorting,
-                "exclude": exclude,
-            },
-            request_options=request_options,
-        )
-        try:
-            if 200 <= _response.status_code < 300:
-                _data = typing.cast(
-                    TracePagePublic,
-                    parse_obj_as(
-                        type_=TracePagePublic,  # type: ignore
-                        object_=_response.json(),
-                    ),
-                )
-                return HttpResponse(response=_response, data=_data)
-            _response_json = _response.json()
-        except JSONDecodeError:
-            raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
-        raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
-
-    def create_trace(
-        self,
-        *,
-        start_time: dt.datetime,
-        id: typing.Optional[str] = OMIT,
-        project_name: typing.Optional[str] = OMIT,
-        name: typing.Optional[str] = OMIT,
-        end_time: typing.Optional[dt.datetime] = OMIT,
-        input: typing.Optional[JsonListStringWrite] = OMIT,
-        output: typing.Optional[JsonListStringWrite] = OMIT,
-        metadata: typing.Optional[JsonNodeWrite] = OMIT,
-        tags: typing.Optional[typing.Sequence[str]] = OMIT,
-        error_info: typing.Optional[ErrorInfoWrite] = OMIT,
-        last_updated_at: typing.Optional[dt.datetime] = OMIT,
-        thread_id: typing.Optional[str] = OMIT,
-        request_options: typing.Optional[RequestOptions] = None,
-    ) -> HttpResponse[None]:
-        """
-        Get trace
-
-        Parameters
-        ----------
-        start_time : dt.datetime
-
-        id : typing.Optional[str]
-
-        project_name : typing.Optional[str]
-            If null, the default project is used
-
-        name : typing.Optional[str]
-
-        end_time : typing.Optional[dt.datetime]
-
-        input : typing.Optional[JsonListStringWrite]
-
-        output : typing.Optional[JsonListStringWrite]
-
-        metadata : typing.Optional[JsonNodeWrite]
-
-        tags : typing.Optional[typing.Sequence[str]]
-
-        error_info : typing.Optional[ErrorInfoWrite]
-
-        last_updated_at : typing.Optional[dt.datetime]
-
-        thread_id : typing.Optional[str]
-
-        request_options : typing.Optional[RequestOptions]
-            Request-specific configuration.
-
-        Returns
-        -------
-        HttpResponse[None]
-        """
-        _response = self._client_wrapper.httpx_client.request(
-            "v1/private/traces",
-            method="POST",
-            json={
-                "id": id,
-                "project_name": project_name,
-                "name": name,
-                "start_time": start_time,
-                "end_time": end_time,
-                "input": convert_and_respect_annotation_metadata(
-                    object_=input, annotation=JsonListStringWrite, direction="write"
+                "value_by_author": convert_and_respect_annotation_metadata(
+                    object_=value_by_author, annotation=typing.Dict[str, ValueEntry], direction="write"
                 ),
-                "output": convert_and_respect_annotation_metadata(
-                    object_=output, annotation=JsonListStringWrite, direction="write"
-                ),
-                "metadata": metadata,
-                "tags": tags,
-                "error_info": convert_and_respect_annotation_metadata(
-                    object_=error_info, annotation=ErrorInfoWrite, direction="write"
-                ),
-                "last_updated_at": last_updated_at,
-                "thread_id": thread_id,
             },
             headers={
                 "content-type": "application/json",
@@ -504,8 +308,399 @@ class RawTracesClient:
             raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
         raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
 
+    def batch_update_traces(
+        self,
+        *,
+        ids: typing.Sequence[str],
+        update: TraceUpdate,
+        merge_tags: typing.Optional[bool] = OMIT,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> HttpResponse[None]:
+        """
+        Update multiple traces
+
+        Parameters
+        ----------
+        ids : typing.Sequence[str]
+            List of trace IDs to update (max 1000)
+
+        update : TraceUpdate
+
+        merge_tags : typing.Optional[bool]
+            If true, merge tags with existing tags instead of replacing them. Default: false
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        HttpResponse[None]
+        """
+        _response = self._client_wrapper.httpx_client.request(
+            "v1/private/traces/batch",
+            method="PATCH",
+            json={
+                "ids": ids,
+                "update": convert_and_respect_annotation_metadata(
+                    object_=update, annotation=TraceUpdate, direction="write"
+                ),
+                "merge_tags": merge_tags,
+            },
+            headers={
+                "content-type": "application/json",
+            },
+            request_options=request_options,
+            omit=OMIT,
+        )
+        try:
+            if 200 <= _response.status_code < 300:
+                return HttpResponse(response=_response, data=None)
+            if _response.status_code == 400:
+                raise BadRequestError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        typing.Optional[typing.Any],
+                        parse_obj_as(
+                            type_=typing.Optional[typing.Any],  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            _response_json = _response.json()
+        except JSONDecodeError:
+            raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
+        raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
+
+    def batch_update_threads(
+        self,
+        *,
+        ids: typing.Sequence[str],
+        update: TraceThreadUpdate,
+        merge_tags: typing.Optional[bool] = OMIT,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> HttpResponse[None]:
+        """
+        Update multiple threads
+
+        Parameters
+        ----------
+        ids : typing.Sequence[str]
+            List of thread model IDs to update (max 1000)
+
+        update : TraceThreadUpdate
+
+        merge_tags : typing.Optional[bool]
+            If true, merge tags with existing tags instead of replacing them. Default: false
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        HttpResponse[None]
+        """
+        _response = self._client_wrapper.httpx_client.request(
+            "v1/private/traces/threads/batch",
+            method="PATCH",
+            json={
+                "ids": ids,
+                "update": convert_and_respect_annotation_metadata(
+                    object_=update, annotation=TraceThreadUpdate, direction="write"
+                ),
+                "merge_tags": merge_tags,
+            },
+            headers={
+                "content-type": "application/json",
+            },
+            request_options=request_options,
+            omit=OMIT,
+        )
+        try:
+            if 200 <= _response.status_code < 300:
+                return HttpResponse(response=_response, data=None)
+            if _response.status_code == 400:
+                raise BadRequestError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        typing.Optional[typing.Any],
+                        parse_obj_as(
+                            type_=typing.Optional[typing.Any],  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            _response_json = _response.json()
+        except JSONDecodeError:
+            raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
+        raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
+
+    def close_trace_thread(
+        self,
+        *,
+        project_name: typing.Optional[str] = OMIT,
+        project_id: typing.Optional[str] = OMIT,
+        thread_id: typing.Optional[str] = OMIT,
+        thread_ids: typing.Optional[typing.Sequence[str]] = OMIT,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> HttpResponse[None]:
+        """
+        Close one or multiple trace threads. Supports both single thread_id and multiple thread_ids for batch operations.
+
+        Parameters
+        ----------
+        project_name : typing.Optional[str]
+
+        project_id : typing.Optional[str]
+
+        thread_id : typing.Optional[str]
+
+        thread_ids : typing.Optional[typing.Sequence[str]]
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        HttpResponse[None]
+        """
+        _response = self._client_wrapper.httpx_client.request(
+            "v1/private/traces/threads/close",
+            method="PUT",
+            json={
+                "project_name": project_name,
+                "project_id": project_id,
+                "thread_id": thread_id,
+                "thread_ids": thread_ids,
+            },
+            headers={
+                "content-type": "application/json",
+            },
+            request_options=request_options,
+            omit=OMIT,
+        )
+        try:
+            if 200 <= _response.status_code < 300:
+                return HttpResponse(response=_response, data=None)
+            if _response.status_code == 404:
+                raise NotFoundError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        typing.Optional[typing.Any],
+                        parse_obj_as(
+                            type_=typing.Optional[typing.Any],  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            _response_json = _response.json()
+        except JSONDecodeError:
+            raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
+        raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
+
+    def get_traces_by_project(
+        self,
+        *,
+        page: typing.Optional[int] = None,
+        size: typing.Optional[int] = None,
+        project_name: typing.Optional[str] = None,
+        project_id: typing.Optional[str] = None,
+        filters: typing.Optional[str] = None,
+        truncate: typing.Optional[bool] = None,
+        strip_attachments: typing.Optional[bool] = None,
+        sorting: typing.Optional[str] = None,
+        exclude: typing.Optional[str] = None,
+        search: typing.Optional[str] = None,
+        from_time: typing.Optional[dt.datetime] = None,
+        to_time: typing.Optional[dt.datetime] = None,
+        annotation_queue_id: typing.Optional[str] = None,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> HttpResponse[TracePagePublic]:
+        """
+        Get traces by project_name or project_id
+
+        Parameters
+        ----------
+        page : typing.Optional[int]
+
+        size : typing.Optional[int]
+
+        project_name : typing.Optional[str]
+
+        project_id : typing.Optional[str]
+
+        filters : typing.Optional[str]
+
+        truncate : typing.Optional[bool]
+
+        strip_attachments : typing.Optional[bool]
+
+        sorting : typing.Optional[str]
+
+        exclude : typing.Optional[str]
+
+        search : typing.Optional[str]
+
+        from_time : typing.Optional[dt.datetime]
+
+        to_time : typing.Optional[dt.datetime]
+
+        annotation_queue_id : typing.Optional[str]
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        HttpResponse[TracePagePublic]
+            Trace resource
+        """
+        _response = self._client_wrapper.httpx_client.request(
+            "v1/private/traces",
+            method="GET",
+            params={
+                "page": page,
+                "size": size,
+                "project_name": project_name,
+                "project_id": project_id,
+                "filters": filters,
+                "truncate": truncate,
+                "strip_attachments": strip_attachments,
+                "sorting": sorting,
+                "exclude": exclude,
+                "search": search,
+                "from_time": serialize_datetime(from_time) if from_time is not None else None,
+                "to_time": serialize_datetime(to_time) if to_time is not None else None,
+                "annotation_queue_id": annotation_queue_id,
+            },
+            request_options=request_options,
+        )
+        try:
+            if 200 <= _response.status_code < 300:
+                _data = typing.cast(
+                    TracePagePublic,
+                    parse_obj_as(
+                        type_=TracePagePublic,  # type: ignore
+                        object_=_response.json(),
+                    ),
+                )
+                return HttpResponse(response=_response, data=_data)
+            _response_json = _response.json()
+        except JSONDecodeError:
+            raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
+        raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
+
+    def create_trace(
+        self,
+        *,
+        start_time: dt.datetime,
+        id: typing.Optional[str] = OMIT,
+        project_name: typing.Optional[str] = OMIT,
+        name: typing.Optional[str] = OMIT,
+        end_time: typing.Optional[dt.datetime] = OMIT,
+        input: typing.Optional[JsonListStringWrite] = OMIT,
+        output: typing.Optional[JsonListStringWrite] = OMIT,
+        metadata: typing.Optional[JsonListStringWrite] = OMIT,
+        tags: typing.Optional[typing.Sequence[str]] = OMIT,
+        error_info: typing.Optional[ErrorInfoWrite] = OMIT,
+        last_updated_at: typing.Optional[dt.datetime] = OMIT,
+        ttft: typing.Optional[float] = OMIT,
+        thread_id: typing.Optional[str] = OMIT,
+        source: typing.Optional[TraceWriteSource] = OMIT,
+        environment: typing.Optional[str] = OMIT,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> HttpResponse[None]:
+        """
+        Get trace
+
+        Parameters
+        ----------
+        start_time : dt.datetime
+
+        id : typing.Optional[str]
+
+        project_name : typing.Optional[str]
+            If null, the default project is used
+
+        name : typing.Optional[str]
+
+        end_time : typing.Optional[dt.datetime]
+
+        input : typing.Optional[JsonListStringWrite]
+
+        output : typing.Optional[JsonListStringWrite]
+
+        metadata : typing.Optional[JsonListStringWrite]
+
+        tags : typing.Optional[typing.Sequence[str]]
+
+        error_info : typing.Optional[ErrorInfoWrite]
+
+        last_updated_at : typing.Optional[dt.datetime]
+
+        ttft : typing.Optional[float]
+            Time to first token in milliseconds
+
+        thread_id : typing.Optional[str]
+
+        source : typing.Optional[TraceWriteSource]
+
+        environment : typing.Optional[str]
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        HttpResponse[None]
+        """
+        _response = self._client_wrapper.httpx_client.request(
+            "v1/private/traces",
+            method="POST",
+            json={
+                "id": id,
+                "project_name": project_name,
+                "name": name,
+                "start_time": start_time,
+                "end_time": end_time,
+                "input": convert_and_respect_annotation_metadata(
+                    object_=input, annotation=JsonListStringWrite, direction="write"
+                ),
+                "output": convert_and_respect_annotation_metadata(
+                    object_=output, annotation=JsonListStringWrite, direction="write"
+                ),
+                "metadata": convert_and_respect_annotation_metadata(
+                    object_=metadata, annotation=JsonListStringWrite, direction="write"
+                ),
+                "tags": tags,
+                "error_info": convert_and_respect_annotation_metadata(
+                    object_=error_info, annotation=ErrorInfoWrite, direction="write"
+                ),
+                "last_updated_at": last_updated_at,
+                "ttft": ttft,
+                "thread_id": thread_id,
+                "source": source,
+                "environment": environment,
+            },
+            headers={
+                "content-type": "application/json",
+            },
+            request_options=request_options,
+            omit=OMIT,
+        )
+        try:
+            if 200 <= _response.status_code < 300:
+                return HttpResponse(response=_response, data=None)
+            _response_json = _response.json()
+        except JSONDecodeError:
+            raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
+        raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
+
     def get_trace_by_id(
-        self, id: str, *, request_options: typing.Optional[RequestOptions] = None
+        self,
+        id: str,
+        *,
+        strip_attachments: typing.Optional[bool] = None,
+        request_options: typing.Optional[RequestOptions] = None,
     ) -> HttpResponse[TracePublic]:
         """
         Get trace by id
@@ -513,6 +708,8 @@ class RawTracesClient:
         Parameters
         ----------
         id : str
+
+        strip_attachments : typing.Optional[bool]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -525,6 +722,9 @@ class RawTracesClient:
         _response = self._client_wrapper.httpx_client.request(
             f"v1/private/traces/{jsonable_encoder(id)}",
             method="GET",
+            params={
+                "strip_attachments": strip_attachments,
+            },
             request_options=request_options,
         )
         try:
@@ -582,10 +782,15 @@ class RawTracesClient:
         end_time: typing.Optional[dt.datetime] = OMIT,
         input: typing.Optional[JsonListString] = OMIT,
         output: typing.Optional[JsonListString] = OMIT,
-        metadata: typing.Optional[JsonNode] = OMIT,
+        metadata: typing.Optional[JsonListString] = OMIT,
         tags: typing.Optional[typing.Sequence[str]] = OMIT,
+        tags_to_add: typing.Optional[typing.Sequence[str]] = OMIT,
+        tags_to_remove: typing.Optional[typing.Sequence[str]] = OMIT,
         error_info: typing.Optional[ErrorInfo] = OMIT,
         thread_id: typing.Optional[str] = OMIT,
+        ttft: typing.Optional[float] = OMIT,
+        source: typing.Optional[TraceUpdateSource] = OMIT,
+        environment: typing.Optional[str] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> HttpResponse[None]:
         """
@@ -609,13 +814,26 @@ class RawTracesClient:
 
         output : typing.Optional[JsonListString]
 
-        metadata : typing.Optional[JsonNode]
+        metadata : typing.Optional[JsonListString]
 
         tags : typing.Optional[typing.Sequence[str]]
+            Tags
+
+        tags_to_add : typing.Optional[typing.Sequence[str]]
+            Tags to add
+
+        tags_to_remove : typing.Optional[typing.Sequence[str]]
+            Tags to remove
 
         error_info : typing.Optional[ErrorInfo]
 
         thread_id : typing.Optional[str]
+
+        ttft : typing.Optional[float]
+
+        source : typing.Optional[TraceUpdateSource]
+
+        environment : typing.Optional[str]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -638,12 +856,19 @@ class RawTracesClient:
                 "output": convert_and_respect_annotation_metadata(
                     object_=output, annotation=JsonListString, direction="write"
                 ),
-                "metadata": metadata,
+                "metadata": convert_and_respect_annotation_metadata(
+                    object_=metadata, annotation=JsonListString, direction="write"
+                ),
                 "tags": tags,
+                "tags_to_add": tags_to_add,
+                "tags_to_remove": tags_to_remove,
                 "error_info": convert_and_respect_annotation_metadata(
                     object_=error_info, annotation=ErrorInfo, direction="write"
                 ),
                 "thread_id": thread_id,
+                "ttft": ttft,
+                "source": source,
+                "environment": environment,
             },
             headers={
                 "content-type": "application/json",
@@ -702,6 +927,8 @@ class RawTracesClient:
         project_name: str,
         thread_id: str,
         names: typing.Sequence[str],
+        author: typing.Optional[str] = OMIT,
+        source_queue_id: typing.Optional[str] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> HttpResponse[None]:
         """
@@ -714,6 +941,10 @@ class RawTracesClient:
         thread_id : str
 
         names : typing.Sequence[str]
+
+        author : typing.Optional[str]
+
+        source_queue_id : typing.Optional[str]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -729,6 +960,8 @@ class RawTracesClient:
                 "project_name": project_name,
                 "thread_id": thread_id,
                 "names": names,
+                "author": author,
+                "source_queue_id": source_queue_id,
             },
             headers={
                 "content-type": "application/json",
@@ -782,7 +1015,13 @@ class RawTracesClient:
         raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
 
     def delete_trace_feedback_score(
-        self, id: str, *, name: str, request_options: typing.Optional[RequestOptions] = None
+        self,
+        id: str,
+        *,
+        name: str,
+        author: typing.Optional[str] = OMIT,
+        source_queue_id: typing.Optional[str] = OMIT,
+        request_options: typing.Optional[RequestOptions] = None,
     ) -> HttpResponse[None]:
         """
         Delete trace feedback score
@@ -792,6 +1031,10 @@ class RawTracesClient:
         id : str
 
         name : str
+
+        author : typing.Optional[str]
+
+        source_queue_id : typing.Optional[str]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -805,6 +1048,8 @@ class RawTracesClient:
             method="POST",
             json={
                 "name": name,
+                "author": author,
+                "source_queue_id": source_queue_id,
             },
             headers={
                 "content-type": "application/json",
@@ -871,7 +1116,11 @@ class RawTracesClient:
         raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
 
     def delete_traces(
-        self, *, ids: typing.Sequence[str], request_options: typing.Optional[RequestOptions] = None
+        self,
+        *,
+        ids: typing.Sequence[str],
+        project_id: typing.Optional[str] = OMIT,
+        request_options: typing.Optional[RequestOptions] = None,
     ) -> HttpResponse[None]:
         """
         Delete traces
@@ -879,6 +1128,10 @@ class RawTracesClient:
         Parameters
         ----------
         ids : typing.Sequence[str]
+            Ids of the traces to delete
+
+        project_id : typing.Optional[str]
+            Optional. Scopes the deletion to this project. When omitted, each trace's owning project is resolved automatically and the trace is deleted under its full key, so a trace can be deleted without knowing its project.
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -892,6 +1145,7 @@ class RawTracesClient:
             method="POST",
             json={
                 "ids": ids,
+                "project_id": project_id,
             },
             headers={
                 "content-type": "application/json",
@@ -902,14 +1156,25 @@ class RawTracesClient:
         try:
             if 200 <= _response.status_code < 300:
                 return HttpResponse(response=_response, data=None)
+            if _response.status_code == 422:
+                raise UnprocessableEntityError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        typing.Optional[typing.Any],
+                        parse_obj_as(
+                            type_=typing.Optional[typing.Any],  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
             _response_json = _response.json()
         except JSONDecodeError:
             raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
         raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
 
-    def find_feedback_score_names_2(
+    def find_feedback_score_names2(
         self, *, project_id: typing.Optional[str] = None, request_options: typing.Optional[RequestOptions] = None
-    ) -> HttpResponse[typing.List[str]]:
+    ) -> HttpResponse[FeedbackScoreNamesPublic]:
         """
         Find Feedback Score names
 
@@ -922,7 +1187,7 @@ class RawTracesClient:
 
         Returns
         -------
-        HttpResponse[typing.List[str]]
+        HttpResponse[FeedbackScoreNamesPublic]
             Feedback Scores resource
         """
         _response = self._client_wrapper.httpx_client.request(
@@ -936,9 +1201,9 @@ class RawTracesClient:
         try:
             if 200 <= _response.status_code < 300:
                 _data = typing.cast(
-                    typing.List[str],
+                    FeedbackScoreNamesPublic,
                     parse_obj_as(
-                        type_=typing.List[str],  # type: ignore
+                        type_=FeedbackScoreNamesPublic,  # type: ignore
                         object_=_response.json(),
                     ),
                 )
@@ -949,21 +1214,21 @@ class RawTracesClient:
         raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
 
     def find_trace_threads_feedback_score_names(
-        self, *, project_id: str, request_options: typing.Optional[RequestOptions] = None
-    ) -> HttpResponse[typing.List[str]]:
+        self, *, project_id: typing.Optional[str] = None, request_options: typing.Optional[RequestOptions] = None
+    ) -> HttpResponse[FeedbackScoreNamesPublic]:
         """
         Find Trace Threads Feedback Score names
 
         Parameters
         ----------
-        project_id : str
+        project_id : typing.Optional[str]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
 
         Returns
         -------
-        HttpResponse[typing.List[str]]
+        HttpResponse[FeedbackScoreNamesPublic]
             Find Trace Threads Feedback Score names
         """
         _response = self._client_wrapper.httpx_client.request(
@@ -977,9 +1242,9 @@ class RawTracesClient:
         try:
             if 200 <= _response.status_code < 300:
                 _data = typing.cast(
-                    typing.List[str],
+                    FeedbackScoreNamesPublic,
                     parse_obj_as(
-                        type_=typing.List[str],  # type: ignore
+                        type_=FeedbackScoreNamesPublic,  # type: ignore
                         object_=_response.json(),
                     ),
                 )
@@ -995,6 +1260,9 @@ class RawTracesClient:
         project_id: typing.Optional[str] = None,
         project_name: typing.Optional[str] = None,
         filters: typing.Optional[str] = None,
+        search: typing.Optional[str] = None,
+        from_time: typing.Optional[dt.datetime] = None,
+        to_time: typing.Optional[dt.datetime] = None,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> HttpResponse[ProjectStatsPublic]:
         """
@@ -1007,6 +1275,12 @@ class RawTracesClient:
         project_name : typing.Optional[str]
 
         filters : typing.Optional[str]
+
+        search : typing.Optional[str]
+
+        from_time : typing.Optional[dt.datetime]
+
+        to_time : typing.Optional[dt.datetime]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -1023,6 +1297,9 @@ class RawTracesClient:
                 "project_id": project_id,
                 "project_name": project_name,
                 "filters": filters,
+                "search": search,
+                "from_time": serialize_datetime(from_time) if from_time is not None else None,
+                "to_time": serialize_datetime(to_time) if to_time is not None else None,
             },
             request_options=request_options,
         )
@@ -1042,16 +1319,16 @@ class RawTracesClient:
         raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
 
     def get_thread_comment(
-        self, comment_id: str, thread_id: str, *, request_options: typing.Optional[RequestOptions] = None
+        self, thread_id: str, comment_id: str, *, request_options: typing.Optional[RequestOptions] = None
     ) -> HttpResponse[Comment]:
         """
         Get thread comment
 
         Parameters
         ----------
-        comment_id : str
-
         thread_id : str
+
+        comment_id : str
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -1092,17 +1369,81 @@ class RawTracesClient:
             raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
         raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
 
+    def get_trace_thread_stats(
+        self,
+        *,
+        project_id: typing.Optional[str] = None,
+        project_name: typing.Optional[str] = None,
+        filters: typing.Optional[str] = None,
+        search: typing.Optional[str] = None,
+        from_time: typing.Optional[dt.datetime] = None,
+        to_time: typing.Optional[dt.datetime] = None,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> HttpResponse[ProjectStatsPublic]:
+        """
+        Get trace thread stats
+
+        Parameters
+        ----------
+        project_id : typing.Optional[str]
+
+        project_name : typing.Optional[str]
+
+        filters : typing.Optional[str]
+
+        search : typing.Optional[str]
+
+        from_time : typing.Optional[dt.datetime]
+
+        to_time : typing.Optional[dt.datetime]
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        HttpResponse[ProjectStatsPublic]
+            Trace thread stats resource
+        """
+        _response = self._client_wrapper.httpx_client.request(
+            "v1/private/traces/threads/stats",
+            method="GET",
+            params={
+                "project_id": project_id,
+                "project_name": project_name,
+                "filters": filters,
+                "search": search,
+                "from_time": serialize_datetime(from_time) if from_time is not None else None,
+                "to_time": serialize_datetime(to_time) if to_time is not None else None,
+            },
+            request_options=request_options,
+        )
+        try:
+            if 200 <= _response.status_code < 300:
+                _data = typing.cast(
+                    ProjectStatsPublic,
+                    parse_obj_as(
+                        type_=ProjectStatsPublic,  # type: ignore
+                        object_=_response.json(),
+                    ),
+                )
+                return HttpResponse(response=_response, data=_data)
+            _response_json = _response.json()
+        except JSONDecodeError:
+            raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
+        raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
+
     def get_trace_comment(
-        self, comment_id: str, trace_id: str, *, request_options: typing.Optional[RequestOptions] = None
+        self, trace_id: str, comment_id: str, *, request_options: typing.Optional[RequestOptions] = None
     ) -> HttpResponse[Comment]:
         """
         Get trace comment
 
         Parameters
         ----------
-        comment_id : str
-
         trace_id : str
+
+        comment_id : str
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -1149,6 +1490,7 @@ class RawTracesClient:
         thread_id: str,
         project_name: typing.Optional[str] = OMIT,
         project_id: typing.Optional[str] = OMIT,
+        truncate: typing.Optional[bool] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> HttpResponse[TraceThread]:
         """
@@ -1161,6 +1503,8 @@ class RawTracesClient:
         project_name : typing.Optional[str]
 
         project_id : typing.Optional[str]
+
+        truncate : typing.Optional[bool]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -1177,6 +1521,7 @@ class RawTracesClient:
                 "project_name": project_name,
                 "project_id": project_id,
                 "thread_id": thread_id,
+                "truncate": truncate,
             },
             headers={
                 "content-type": "application/json",
@@ -1218,8 +1563,13 @@ class RawTracesClient:
         project_name: typing.Optional[str] = None,
         project_id: typing.Optional[str] = None,
         truncate: typing.Optional[bool] = None,
+        strip_attachments: typing.Optional[bool] = None,
         filters: typing.Optional[str] = None,
         sorting: typing.Optional[str] = None,
+        search: typing.Optional[str] = None,
+        from_time: typing.Optional[dt.datetime] = None,
+        to_time: typing.Optional[dt.datetime] = None,
+        annotation_queue_id: typing.Optional[str] = None,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> HttpResponse[TraceThreadPage]:
         """
@@ -1237,9 +1587,19 @@ class RawTracesClient:
 
         truncate : typing.Optional[bool]
 
+        strip_attachments : typing.Optional[bool]
+
         filters : typing.Optional[str]
 
         sorting : typing.Optional[str]
+
+        search : typing.Optional[str]
+
+        from_time : typing.Optional[dt.datetime]
+
+        to_time : typing.Optional[dt.datetime]
+
+        annotation_queue_id : typing.Optional[str]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -1258,8 +1618,13 @@ class RawTracesClient:
                 "project_name": project_name,
                 "project_id": project_id,
                 "truncate": truncate,
+                "strip_attachments": strip_attachments,
                 "filters": filters,
                 "sorting": sorting,
+                "search": search,
+                "from_time": serialize_datetime(from_time) if from_time is not None else None,
+                "to_time": serialize_datetime(to_time) if to_time is not None else None,
+                "annotation_queue_id": annotation_queue_id,
             },
             request_options=request_options,
         )
@@ -1284,6 +1649,7 @@ class RawTracesClient:
         thread_id: str,
         project_name: typing.Optional[str] = OMIT,
         project_id: typing.Optional[str] = OMIT,
+        truncate: typing.Optional[bool] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> HttpResponse[None]:
         """
@@ -1296,6 +1662,8 @@ class RawTracesClient:
         project_name : typing.Optional[str]
 
         project_id : typing.Optional[str]
+
+        truncate : typing.Optional[bool]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -1311,6 +1679,7 @@ class RawTracesClient:
                 "project_name": project_name,
                 "project_id": project_id,
                 "thread_id": thread_id,
+                "truncate": truncate,
             },
             headers={
                 "content-type": "application/json",
@@ -1420,6 +1789,9 @@ class RawTracesClient:
         last_retrieved_thread_model_id: typing.Optional[str] = OMIT,
         limit: typing.Optional[int] = OMIT,
         truncate: typing.Optional[bool] = OMIT,
+        strip_attachments: typing.Optional[bool] = OMIT,
+        from_time: typing.Optional[dt.datetime] = OMIT,
+        to_time: typing.Optional[dt.datetime] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> typing.Iterator[HttpResponse[typing.Iterator[bytes]]]:
         """
@@ -1439,7 +1811,16 @@ class RawTracesClient:
             Max number of trace thread to be streamed
 
         truncate : typing.Optional[bool]
-            Truncate image included in either input, output or metadata
+            Truncate input, output and metadata to slim payloads
+
+        strip_attachments : typing.Optional[bool]
+            If true, returns attachment references like [file.png]; if false, downloads and reinjects stripped attachments
+
+        from_time : typing.Optional[dt.datetime]
+            Filter trace threads created from this time (ISO-8601 format).
+
+        to_time : typing.Optional[dt.datetime]
+            Filter trace threads created up to this time (ISO-8601 format). If not provided, defaults to current time. Must be after 'from_time'.
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration. You can pass in configuration such as `chunk_size`, and more to customize the request and response.
@@ -1461,6 +1842,9 @@ class RawTracesClient:
                 "last_retrieved_thread_model_id": last_retrieved_thread_model_id,
                 "limit": limit,
                 "truncate": truncate,
+                "strip_attachments": strip_attachments,
+                "from_time": from_time,
+                "to_time": to_time,
             },
             headers={
                 "content-type": "application/json",
@@ -1507,6 +1891,10 @@ class RawTracesClient:
         last_retrieved_id: typing.Optional[str] = OMIT,
         limit: typing.Optional[int] = OMIT,
         truncate: typing.Optional[bool] = OMIT,
+        strip_attachments: typing.Optional[bool] = OMIT,
+        exclude: typing.Optional[typing.Sequence[TraceSearchStreamRequestPublicExcludeItem]] = OMIT,
+        from_time: typing.Optional[dt.datetime] = OMIT,
+        to_time: typing.Optional[dt.datetime] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> typing.Iterator[HttpResponse[typing.Iterator[bytes]]]:
         """
@@ -1526,7 +1914,19 @@ class RawTracesClient:
             Max number of traces to be streamed
 
         truncate : typing.Optional[bool]
-            Truncate image included in either input, output or metadata
+            Truncate input, output and metadata to slim payloads
+
+        strip_attachments : typing.Optional[bool]
+            If true, returns attachment references like [file.png]; if false, downloads and reinjects stripped attachments
+
+        exclude : typing.Optional[typing.Sequence[TraceSearchStreamRequestPublicExcludeItem]]
+            Fields to exclude from the response
+
+        from_time : typing.Optional[dt.datetime]
+            Filter traces created from this time (ISO-8601 format).
+
+        to_time : typing.Optional[dt.datetime]
+            Filter traces created up to this time (ISO-8601 format). If not provided, defaults to current time. Must be after 'from_time'.
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration. You can pass in configuration such as `chunk_size`, and more to customize the request and response.
@@ -1548,6 +1948,10 @@ class RawTracesClient:
                 "last_retrieved_id": last_retrieved_id,
                 "limit": limit,
                 "truncate": truncate,
+                "strip_attachments": strip_attachments,
+                "exclude": exclude,
+                "from_time": from_time,
+                "to_time": to_time,
             },
             headers={
                 "content-type": "application/json",
@@ -1595,16 +1999,69 @@ class RawTracesClient:
 
             yield stream()
 
+    def exist(
+        self,
+        *,
+        project_id: typing.Optional[str] = None,
+        project_name: typing.Optional[str] = None,
+        source: typing.Optional[str] = None,
+        thread_only: typing.Optional[bool] = None,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> HttpResponse[ExistenceResponse]:
+        """
+        Returns whether the project has at least one trace matching the given scope. Cheap existence probe (LIMIT 1) used to drive empty-state decisions without scanning or aggregating the whole project.
+
+        Parameters
+        ----------
+        project_id : typing.Optional[str]
+
+        project_name : typing.Optional[str]
+
+        source : typing.Optional[str]
+
+        thread_only : typing.Optional[bool]
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        HttpResponse[ExistenceResponse]
+            Trace existence
+        """
+        _response = self._client_wrapper.httpx_client.request(
+            "v1/private/traces/exists",
+            method="GET",
+            params={
+                "project_id": project_id,
+                "project_name": project_name,
+                "source": source,
+                "thread_only": thread_only,
+            },
+            request_options=request_options,
+        )
+        try:
+            if 200 <= _response.status_code < 300:
+                _data = typing.cast(
+                    ExistenceResponse,
+                    parse_obj_as(
+                        type_=ExistenceResponse,  # type: ignore
+                        object_=_response.json(),
+                    ),
+                )
+                return HttpResponse(response=_response, data=_data)
+            _response_json = _response.json()
+        except JSONDecodeError:
+            raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
+        raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
+
     def update_thread(
         self,
         thread_model_id: str,
         *,
-        text: str,
-        id: typing.Optional[str] = OMIT,
-        created_at: typing.Optional[dt.datetime] = OMIT,
-        last_updated_at: typing.Optional[dt.datetime] = OMIT,
-        created_by: typing.Optional[str] = OMIT,
-        last_updated_by: typing.Optional[str] = OMIT,
+        tags: typing.Optional[typing.Sequence[str]] = OMIT,
+        tags_to_add: typing.Optional[typing.Sequence[str]] = OMIT,
+        tags_to_remove: typing.Optional[typing.Sequence[str]] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> HttpResponse[None]:
         """
@@ -1614,17 +2071,11 @@ class RawTracesClient:
         ----------
         thread_model_id : str
 
-        text : str
+        tags : typing.Optional[typing.Sequence[str]]
 
-        id : typing.Optional[str]
+        tags_to_add : typing.Optional[typing.Sequence[str]]
 
-        created_at : typing.Optional[dt.datetime]
-
-        last_updated_at : typing.Optional[dt.datetime]
-
-        created_by : typing.Optional[str]
-
-        last_updated_by : typing.Optional[str]
+        tags_to_remove : typing.Optional[typing.Sequence[str]]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -1637,12 +2088,9 @@ class RawTracesClient:
             f"v1/private/traces/threads/{jsonable_encoder(thread_model_id)}",
             method="PATCH",
             json={
-                "id": id,
-                "text": text,
-                "created_at": created_at,
-                "last_updated_at": last_updated_at,
-                "created_by": created_by,
-                "last_updated_by": last_updated_by,
+                "tags": tags,
+                "tags_to_add": tags_to_add,
+                "tags_to_remove": tags_to_remove,
             },
             headers={
                 "content-type": "application/json",
@@ -1675,6 +2123,7 @@ class RawTracesClient:
         *,
         text: str,
         id: typing.Optional[str] = OMIT,
+        source_queue_id: typing.Optional[str] = OMIT,
         created_at: typing.Optional[dt.datetime] = OMIT,
         last_updated_at: typing.Optional[dt.datetime] = OMIT,
         created_by: typing.Optional[str] = OMIT,
@@ -1691,6 +2140,8 @@ class RawTracesClient:
         text : str
 
         id : typing.Optional[str]
+
+        source_queue_id : typing.Optional[str]
 
         created_at : typing.Optional[dt.datetime]
 
@@ -1713,6 +2164,7 @@ class RawTracesClient:
             json={
                 "id": id,
                 "text": text,
+                "source_queue_id": source_queue_id,
                 "created_at": created_at,
                 "last_updated_at": last_updated_at,
                 "created_by": created_by,
@@ -1749,6 +2201,7 @@ class RawTracesClient:
         *,
         text: str,
         id: typing.Optional[str] = OMIT,
+        source_queue_id: typing.Optional[str] = OMIT,
         created_at: typing.Optional[dt.datetime] = OMIT,
         last_updated_at: typing.Optional[dt.datetime] = OMIT,
         created_by: typing.Optional[str] = OMIT,
@@ -1765,6 +2218,8 @@ class RawTracesClient:
         text : str
 
         id : typing.Optional[str]
+
+        source_queue_id : typing.Optional[str]
 
         created_at : typing.Optional[dt.datetime]
 
@@ -1787,6 +2242,7 @@ class RawTracesClient:
             json={
                 "id": id,
                 "text": text,
+                "source_queue_id": source_queue_id,
                 "created_at": created_at,
                 "last_updated_at": last_updated_at,
                 "created_by": created_by,
@@ -1828,6 +2284,7 @@ class AsyncRawTracesClient:
         *,
         text: str,
         id: typing.Optional[str] = OMIT,
+        source_queue_id: typing.Optional[str] = OMIT,
         created_at: typing.Optional[dt.datetime] = OMIT,
         last_updated_at: typing.Optional[dt.datetime] = OMIT,
         created_by: typing.Optional[str] = OMIT,
@@ -1844,6 +2301,8 @@ class AsyncRawTracesClient:
         text : str
 
         id : typing.Optional[str]
+
+        source_queue_id : typing.Optional[str]
 
         created_at : typing.Optional[dt.datetime]
 
@@ -1866,6 +2325,7 @@ class AsyncRawTracesClient:
             json={
                 "id": id,
                 "text": text,
+                "source_queue_id": source_queue_id,
                 "created_at": created_at,
                 "last_updated_at": last_updated_at,
                 "created_by": created_by,
@@ -1891,6 +2351,7 @@ class AsyncRawTracesClient:
         *,
         text: str,
         id: typing.Optional[str] = OMIT,
+        source_queue_id: typing.Optional[str] = OMIT,
         created_at: typing.Optional[dt.datetime] = OMIT,
         last_updated_at: typing.Optional[dt.datetime] = OMIT,
         created_by: typing.Optional[str] = OMIT,
@@ -1907,6 +2368,8 @@ class AsyncRawTracesClient:
         text : str
 
         id : typing.Optional[str]
+
+        source_queue_id : typing.Optional[str]
 
         created_at : typing.Optional[dt.datetime]
 
@@ -1929,6 +2392,7 @@ class AsyncRawTracesClient:
             json={
                 "id": id,
                 "text": text,
+                "source_queue_id": source_queue_id,
                 "created_at": created_at,
                 "last_updated_at": last_updated_at,
                 "created_by": created_by,
@@ -1957,10 +2421,12 @@ class AsyncRawTracesClient:
         source: FeedbackScoreSource,
         category_name: typing.Optional[str] = OMIT,
         reason: typing.Optional[str] = OMIT,
+        source_queue_id: typing.Optional[str] = OMIT,
         created_at: typing.Optional[dt.datetime] = OMIT,
         last_updated_at: typing.Optional[dt.datetime] = OMIT,
         created_by: typing.Optional[str] = OMIT,
         last_updated_by: typing.Optional[str] = OMIT,
+        value_by_author: typing.Optional[typing.Dict[str, ValueEntry]] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> AsyncHttpResponse[None]:
         """
@@ -1980,6 +2446,8 @@ class AsyncRawTracesClient:
 
         reason : typing.Optional[str]
 
+        source_queue_id : typing.Optional[str]
+
         created_at : typing.Optional[dt.datetime]
 
         last_updated_at : typing.Optional[dt.datetime]
@@ -1987,6 +2455,8 @@ class AsyncRawTracesClient:
         created_by : typing.Optional[str]
 
         last_updated_by : typing.Optional[str]
+
+        value_by_author : typing.Optional[typing.Dict[str, ValueEntry]]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -2004,232 +2474,14 @@ class AsyncRawTracesClient:
                 "value": value,
                 "reason": reason,
                 "source": source,
+                "source_queue_id": source_queue_id,
                 "created_at": created_at,
                 "last_updated_at": last_updated_at,
                 "created_by": created_by,
                 "last_updated_by": last_updated_by,
-            },
-            headers={
-                "content-type": "application/json",
-            },
-            request_options=request_options,
-            omit=OMIT,
-        )
-        try:
-            if 200 <= _response.status_code < 300:
-                return AsyncHttpResponse(response=_response, data=None)
-            _response_json = _response.json()
-        except JSONDecodeError:
-            raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
-        raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
-
-    async def close_trace_thread(
-        self,
-        *,
-        thread_id: str,
-        project_name: typing.Optional[str] = OMIT,
-        project_id: typing.Optional[str] = OMIT,
-        request_options: typing.Optional[RequestOptions] = None,
-    ) -> AsyncHttpResponse[None]:
-        """
-        Close trace thread
-
-        Parameters
-        ----------
-        thread_id : str
-
-        project_name : typing.Optional[str]
-
-        project_id : typing.Optional[str]
-
-        request_options : typing.Optional[RequestOptions]
-            Request-specific configuration.
-
-        Returns
-        -------
-        AsyncHttpResponse[None]
-        """
-        _response = await self._client_wrapper.httpx_client.request(
-            "v1/private/traces/threads/close",
-            method="PUT",
-            json={
-                "project_name": project_name,
-                "project_id": project_id,
-                "thread_id": thread_id,
-            },
-            headers={
-                "content-type": "application/json",
-            },
-            request_options=request_options,
-            omit=OMIT,
-        )
-        try:
-            if 200 <= _response.status_code < 300:
-                return AsyncHttpResponse(response=_response, data=None)
-            if _response.status_code == 404:
-                raise NotFoundError(
-                    headers=dict(_response.headers),
-                    body=typing.cast(
-                        typing.Optional[typing.Any],
-                        parse_obj_as(
-                            type_=typing.Optional[typing.Any],  # type: ignore
-                            object_=_response.json(),
-                        ),
-                    ),
-                )
-            _response_json = _response.json()
-        except JSONDecodeError:
-            raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
-        raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
-
-    async def get_traces_by_project(
-        self,
-        *,
-        page: typing.Optional[int] = None,
-        size: typing.Optional[int] = None,
-        project_name: typing.Optional[str] = None,
-        project_id: typing.Optional[str] = None,
-        filters: typing.Optional[str] = None,
-        truncate: typing.Optional[bool] = None,
-        sorting: typing.Optional[str] = None,
-        exclude: typing.Optional[str] = None,
-        request_options: typing.Optional[RequestOptions] = None,
-    ) -> AsyncHttpResponse[TracePagePublic]:
-        """
-        Get traces by project_name or project_id
-
-        Parameters
-        ----------
-        page : typing.Optional[int]
-
-        size : typing.Optional[int]
-
-        project_name : typing.Optional[str]
-
-        project_id : typing.Optional[str]
-
-        filters : typing.Optional[str]
-
-        truncate : typing.Optional[bool]
-
-        sorting : typing.Optional[str]
-
-        exclude : typing.Optional[str]
-
-        request_options : typing.Optional[RequestOptions]
-            Request-specific configuration.
-
-        Returns
-        -------
-        AsyncHttpResponse[TracePagePublic]
-            Trace resource
-        """
-        _response = await self._client_wrapper.httpx_client.request(
-            "v1/private/traces",
-            method="GET",
-            params={
-                "page": page,
-                "size": size,
-                "project_name": project_name,
-                "project_id": project_id,
-                "filters": filters,
-                "truncate": truncate,
-                "sorting": sorting,
-                "exclude": exclude,
-            },
-            request_options=request_options,
-        )
-        try:
-            if 200 <= _response.status_code < 300:
-                _data = typing.cast(
-                    TracePagePublic,
-                    parse_obj_as(
-                        type_=TracePagePublic,  # type: ignore
-                        object_=_response.json(),
-                    ),
-                )
-                return AsyncHttpResponse(response=_response, data=_data)
-            _response_json = _response.json()
-        except JSONDecodeError:
-            raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
-        raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
-
-    async def create_trace(
-        self,
-        *,
-        start_time: dt.datetime,
-        id: typing.Optional[str] = OMIT,
-        project_name: typing.Optional[str] = OMIT,
-        name: typing.Optional[str] = OMIT,
-        end_time: typing.Optional[dt.datetime] = OMIT,
-        input: typing.Optional[JsonListStringWrite] = OMIT,
-        output: typing.Optional[JsonListStringWrite] = OMIT,
-        metadata: typing.Optional[JsonNodeWrite] = OMIT,
-        tags: typing.Optional[typing.Sequence[str]] = OMIT,
-        error_info: typing.Optional[ErrorInfoWrite] = OMIT,
-        last_updated_at: typing.Optional[dt.datetime] = OMIT,
-        thread_id: typing.Optional[str] = OMIT,
-        request_options: typing.Optional[RequestOptions] = None,
-    ) -> AsyncHttpResponse[None]:
-        """
-        Get trace
-
-        Parameters
-        ----------
-        start_time : dt.datetime
-
-        id : typing.Optional[str]
-
-        project_name : typing.Optional[str]
-            If null, the default project is used
-
-        name : typing.Optional[str]
-
-        end_time : typing.Optional[dt.datetime]
-
-        input : typing.Optional[JsonListStringWrite]
-
-        output : typing.Optional[JsonListStringWrite]
-
-        metadata : typing.Optional[JsonNodeWrite]
-
-        tags : typing.Optional[typing.Sequence[str]]
-
-        error_info : typing.Optional[ErrorInfoWrite]
-
-        last_updated_at : typing.Optional[dt.datetime]
-
-        thread_id : typing.Optional[str]
-
-        request_options : typing.Optional[RequestOptions]
-            Request-specific configuration.
-
-        Returns
-        -------
-        AsyncHttpResponse[None]
-        """
-        _response = await self._client_wrapper.httpx_client.request(
-            "v1/private/traces",
-            method="POST",
-            json={
-                "id": id,
-                "project_name": project_name,
-                "name": name,
-                "start_time": start_time,
-                "end_time": end_time,
-                "input": convert_and_respect_annotation_metadata(
-                    object_=input, annotation=JsonListStringWrite, direction="write"
+                "value_by_author": convert_and_respect_annotation_metadata(
+                    object_=value_by_author, annotation=typing.Dict[str, ValueEntry], direction="write"
                 ),
-                "output": convert_and_respect_annotation_metadata(
-                    object_=output, annotation=JsonListStringWrite, direction="write"
-                ),
-                "metadata": metadata,
-                "tags": tags,
-                "error_info": convert_and_respect_annotation_metadata(
-                    object_=error_info, annotation=ErrorInfoWrite, direction="write"
-                ),
-                "last_updated_at": last_updated_at,
-                "thread_id": thread_id,
             },
             headers={
                 "content-type": "application/json",
@@ -2284,8 +2536,399 @@ class AsyncRawTracesClient:
             raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
         raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
 
+    async def batch_update_traces(
+        self,
+        *,
+        ids: typing.Sequence[str],
+        update: TraceUpdate,
+        merge_tags: typing.Optional[bool] = OMIT,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> AsyncHttpResponse[None]:
+        """
+        Update multiple traces
+
+        Parameters
+        ----------
+        ids : typing.Sequence[str]
+            List of trace IDs to update (max 1000)
+
+        update : TraceUpdate
+
+        merge_tags : typing.Optional[bool]
+            If true, merge tags with existing tags instead of replacing them. Default: false
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        AsyncHttpResponse[None]
+        """
+        _response = await self._client_wrapper.httpx_client.request(
+            "v1/private/traces/batch",
+            method="PATCH",
+            json={
+                "ids": ids,
+                "update": convert_and_respect_annotation_metadata(
+                    object_=update, annotation=TraceUpdate, direction="write"
+                ),
+                "merge_tags": merge_tags,
+            },
+            headers={
+                "content-type": "application/json",
+            },
+            request_options=request_options,
+            omit=OMIT,
+        )
+        try:
+            if 200 <= _response.status_code < 300:
+                return AsyncHttpResponse(response=_response, data=None)
+            if _response.status_code == 400:
+                raise BadRequestError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        typing.Optional[typing.Any],
+                        parse_obj_as(
+                            type_=typing.Optional[typing.Any],  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            _response_json = _response.json()
+        except JSONDecodeError:
+            raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
+        raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
+
+    async def batch_update_threads(
+        self,
+        *,
+        ids: typing.Sequence[str],
+        update: TraceThreadUpdate,
+        merge_tags: typing.Optional[bool] = OMIT,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> AsyncHttpResponse[None]:
+        """
+        Update multiple threads
+
+        Parameters
+        ----------
+        ids : typing.Sequence[str]
+            List of thread model IDs to update (max 1000)
+
+        update : TraceThreadUpdate
+
+        merge_tags : typing.Optional[bool]
+            If true, merge tags with existing tags instead of replacing them. Default: false
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        AsyncHttpResponse[None]
+        """
+        _response = await self._client_wrapper.httpx_client.request(
+            "v1/private/traces/threads/batch",
+            method="PATCH",
+            json={
+                "ids": ids,
+                "update": convert_and_respect_annotation_metadata(
+                    object_=update, annotation=TraceThreadUpdate, direction="write"
+                ),
+                "merge_tags": merge_tags,
+            },
+            headers={
+                "content-type": "application/json",
+            },
+            request_options=request_options,
+            omit=OMIT,
+        )
+        try:
+            if 200 <= _response.status_code < 300:
+                return AsyncHttpResponse(response=_response, data=None)
+            if _response.status_code == 400:
+                raise BadRequestError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        typing.Optional[typing.Any],
+                        parse_obj_as(
+                            type_=typing.Optional[typing.Any],  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            _response_json = _response.json()
+        except JSONDecodeError:
+            raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
+        raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
+
+    async def close_trace_thread(
+        self,
+        *,
+        project_name: typing.Optional[str] = OMIT,
+        project_id: typing.Optional[str] = OMIT,
+        thread_id: typing.Optional[str] = OMIT,
+        thread_ids: typing.Optional[typing.Sequence[str]] = OMIT,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> AsyncHttpResponse[None]:
+        """
+        Close one or multiple trace threads. Supports both single thread_id and multiple thread_ids for batch operations.
+
+        Parameters
+        ----------
+        project_name : typing.Optional[str]
+
+        project_id : typing.Optional[str]
+
+        thread_id : typing.Optional[str]
+
+        thread_ids : typing.Optional[typing.Sequence[str]]
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        AsyncHttpResponse[None]
+        """
+        _response = await self._client_wrapper.httpx_client.request(
+            "v1/private/traces/threads/close",
+            method="PUT",
+            json={
+                "project_name": project_name,
+                "project_id": project_id,
+                "thread_id": thread_id,
+                "thread_ids": thread_ids,
+            },
+            headers={
+                "content-type": "application/json",
+            },
+            request_options=request_options,
+            omit=OMIT,
+        )
+        try:
+            if 200 <= _response.status_code < 300:
+                return AsyncHttpResponse(response=_response, data=None)
+            if _response.status_code == 404:
+                raise NotFoundError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        typing.Optional[typing.Any],
+                        parse_obj_as(
+                            type_=typing.Optional[typing.Any],  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            _response_json = _response.json()
+        except JSONDecodeError:
+            raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
+        raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
+
+    async def get_traces_by_project(
+        self,
+        *,
+        page: typing.Optional[int] = None,
+        size: typing.Optional[int] = None,
+        project_name: typing.Optional[str] = None,
+        project_id: typing.Optional[str] = None,
+        filters: typing.Optional[str] = None,
+        truncate: typing.Optional[bool] = None,
+        strip_attachments: typing.Optional[bool] = None,
+        sorting: typing.Optional[str] = None,
+        exclude: typing.Optional[str] = None,
+        search: typing.Optional[str] = None,
+        from_time: typing.Optional[dt.datetime] = None,
+        to_time: typing.Optional[dt.datetime] = None,
+        annotation_queue_id: typing.Optional[str] = None,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> AsyncHttpResponse[TracePagePublic]:
+        """
+        Get traces by project_name or project_id
+
+        Parameters
+        ----------
+        page : typing.Optional[int]
+
+        size : typing.Optional[int]
+
+        project_name : typing.Optional[str]
+
+        project_id : typing.Optional[str]
+
+        filters : typing.Optional[str]
+
+        truncate : typing.Optional[bool]
+
+        strip_attachments : typing.Optional[bool]
+
+        sorting : typing.Optional[str]
+
+        exclude : typing.Optional[str]
+
+        search : typing.Optional[str]
+
+        from_time : typing.Optional[dt.datetime]
+
+        to_time : typing.Optional[dt.datetime]
+
+        annotation_queue_id : typing.Optional[str]
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        AsyncHttpResponse[TracePagePublic]
+            Trace resource
+        """
+        _response = await self._client_wrapper.httpx_client.request(
+            "v1/private/traces",
+            method="GET",
+            params={
+                "page": page,
+                "size": size,
+                "project_name": project_name,
+                "project_id": project_id,
+                "filters": filters,
+                "truncate": truncate,
+                "strip_attachments": strip_attachments,
+                "sorting": sorting,
+                "exclude": exclude,
+                "search": search,
+                "from_time": serialize_datetime(from_time) if from_time is not None else None,
+                "to_time": serialize_datetime(to_time) if to_time is not None else None,
+                "annotation_queue_id": annotation_queue_id,
+            },
+            request_options=request_options,
+        )
+        try:
+            if 200 <= _response.status_code < 300:
+                _data = typing.cast(
+                    TracePagePublic,
+                    parse_obj_as(
+                        type_=TracePagePublic,  # type: ignore
+                        object_=_response.json(),
+                    ),
+                )
+                return AsyncHttpResponse(response=_response, data=_data)
+            _response_json = _response.json()
+        except JSONDecodeError:
+            raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
+        raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
+
+    async def create_trace(
+        self,
+        *,
+        start_time: dt.datetime,
+        id: typing.Optional[str] = OMIT,
+        project_name: typing.Optional[str] = OMIT,
+        name: typing.Optional[str] = OMIT,
+        end_time: typing.Optional[dt.datetime] = OMIT,
+        input: typing.Optional[JsonListStringWrite] = OMIT,
+        output: typing.Optional[JsonListStringWrite] = OMIT,
+        metadata: typing.Optional[JsonListStringWrite] = OMIT,
+        tags: typing.Optional[typing.Sequence[str]] = OMIT,
+        error_info: typing.Optional[ErrorInfoWrite] = OMIT,
+        last_updated_at: typing.Optional[dt.datetime] = OMIT,
+        ttft: typing.Optional[float] = OMIT,
+        thread_id: typing.Optional[str] = OMIT,
+        source: typing.Optional[TraceWriteSource] = OMIT,
+        environment: typing.Optional[str] = OMIT,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> AsyncHttpResponse[None]:
+        """
+        Get trace
+
+        Parameters
+        ----------
+        start_time : dt.datetime
+
+        id : typing.Optional[str]
+
+        project_name : typing.Optional[str]
+            If null, the default project is used
+
+        name : typing.Optional[str]
+
+        end_time : typing.Optional[dt.datetime]
+
+        input : typing.Optional[JsonListStringWrite]
+
+        output : typing.Optional[JsonListStringWrite]
+
+        metadata : typing.Optional[JsonListStringWrite]
+
+        tags : typing.Optional[typing.Sequence[str]]
+
+        error_info : typing.Optional[ErrorInfoWrite]
+
+        last_updated_at : typing.Optional[dt.datetime]
+
+        ttft : typing.Optional[float]
+            Time to first token in milliseconds
+
+        thread_id : typing.Optional[str]
+
+        source : typing.Optional[TraceWriteSource]
+
+        environment : typing.Optional[str]
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        AsyncHttpResponse[None]
+        """
+        _response = await self._client_wrapper.httpx_client.request(
+            "v1/private/traces",
+            method="POST",
+            json={
+                "id": id,
+                "project_name": project_name,
+                "name": name,
+                "start_time": start_time,
+                "end_time": end_time,
+                "input": convert_and_respect_annotation_metadata(
+                    object_=input, annotation=JsonListStringWrite, direction="write"
+                ),
+                "output": convert_and_respect_annotation_metadata(
+                    object_=output, annotation=JsonListStringWrite, direction="write"
+                ),
+                "metadata": convert_and_respect_annotation_metadata(
+                    object_=metadata, annotation=JsonListStringWrite, direction="write"
+                ),
+                "tags": tags,
+                "error_info": convert_and_respect_annotation_metadata(
+                    object_=error_info, annotation=ErrorInfoWrite, direction="write"
+                ),
+                "last_updated_at": last_updated_at,
+                "ttft": ttft,
+                "thread_id": thread_id,
+                "source": source,
+                "environment": environment,
+            },
+            headers={
+                "content-type": "application/json",
+            },
+            request_options=request_options,
+            omit=OMIT,
+        )
+        try:
+            if 200 <= _response.status_code < 300:
+                return AsyncHttpResponse(response=_response, data=None)
+            _response_json = _response.json()
+        except JSONDecodeError:
+            raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
+        raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
+
     async def get_trace_by_id(
-        self, id: str, *, request_options: typing.Optional[RequestOptions] = None
+        self,
+        id: str,
+        *,
+        strip_attachments: typing.Optional[bool] = None,
+        request_options: typing.Optional[RequestOptions] = None,
     ) -> AsyncHttpResponse[TracePublic]:
         """
         Get trace by id
@@ -2293,6 +2936,8 @@ class AsyncRawTracesClient:
         Parameters
         ----------
         id : str
+
+        strip_attachments : typing.Optional[bool]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -2305,6 +2950,9 @@ class AsyncRawTracesClient:
         _response = await self._client_wrapper.httpx_client.request(
             f"v1/private/traces/{jsonable_encoder(id)}",
             method="GET",
+            params={
+                "strip_attachments": strip_attachments,
+            },
             request_options=request_options,
         )
         try:
@@ -2362,10 +3010,15 @@ class AsyncRawTracesClient:
         end_time: typing.Optional[dt.datetime] = OMIT,
         input: typing.Optional[JsonListString] = OMIT,
         output: typing.Optional[JsonListString] = OMIT,
-        metadata: typing.Optional[JsonNode] = OMIT,
+        metadata: typing.Optional[JsonListString] = OMIT,
         tags: typing.Optional[typing.Sequence[str]] = OMIT,
+        tags_to_add: typing.Optional[typing.Sequence[str]] = OMIT,
+        tags_to_remove: typing.Optional[typing.Sequence[str]] = OMIT,
         error_info: typing.Optional[ErrorInfo] = OMIT,
         thread_id: typing.Optional[str] = OMIT,
+        ttft: typing.Optional[float] = OMIT,
+        source: typing.Optional[TraceUpdateSource] = OMIT,
+        environment: typing.Optional[str] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> AsyncHttpResponse[None]:
         """
@@ -2389,13 +3042,26 @@ class AsyncRawTracesClient:
 
         output : typing.Optional[JsonListString]
 
-        metadata : typing.Optional[JsonNode]
+        metadata : typing.Optional[JsonListString]
 
         tags : typing.Optional[typing.Sequence[str]]
+            Tags
+
+        tags_to_add : typing.Optional[typing.Sequence[str]]
+            Tags to add
+
+        tags_to_remove : typing.Optional[typing.Sequence[str]]
+            Tags to remove
 
         error_info : typing.Optional[ErrorInfo]
 
         thread_id : typing.Optional[str]
+
+        ttft : typing.Optional[float]
+
+        source : typing.Optional[TraceUpdateSource]
+
+        environment : typing.Optional[str]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -2418,12 +3084,19 @@ class AsyncRawTracesClient:
                 "output": convert_and_respect_annotation_metadata(
                     object_=output, annotation=JsonListString, direction="write"
                 ),
-                "metadata": metadata,
+                "metadata": convert_and_respect_annotation_metadata(
+                    object_=metadata, annotation=JsonListString, direction="write"
+                ),
                 "tags": tags,
+                "tags_to_add": tags_to_add,
+                "tags_to_remove": tags_to_remove,
                 "error_info": convert_and_respect_annotation_metadata(
                     object_=error_info, annotation=ErrorInfo, direction="write"
                 ),
                 "thread_id": thread_id,
+                "ttft": ttft,
+                "source": source,
+                "environment": environment,
             },
             headers={
                 "content-type": "application/json",
@@ -2482,6 +3155,8 @@ class AsyncRawTracesClient:
         project_name: str,
         thread_id: str,
         names: typing.Sequence[str],
+        author: typing.Optional[str] = OMIT,
+        source_queue_id: typing.Optional[str] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> AsyncHttpResponse[None]:
         """
@@ -2494,6 +3169,10 @@ class AsyncRawTracesClient:
         thread_id : str
 
         names : typing.Sequence[str]
+
+        author : typing.Optional[str]
+
+        source_queue_id : typing.Optional[str]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -2509,6 +3188,8 @@ class AsyncRawTracesClient:
                 "project_name": project_name,
                 "thread_id": thread_id,
                 "names": names,
+                "author": author,
+                "source_queue_id": source_queue_id,
             },
             headers={
                 "content-type": "application/json",
@@ -2562,7 +3243,13 @@ class AsyncRawTracesClient:
         raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
 
     async def delete_trace_feedback_score(
-        self, id: str, *, name: str, request_options: typing.Optional[RequestOptions] = None
+        self,
+        id: str,
+        *,
+        name: str,
+        author: typing.Optional[str] = OMIT,
+        source_queue_id: typing.Optional[str] = OMIT,
+        request_options: typing.Optional[RequestOptions] = None,
     ) -> AsyncHttpResponse[None]:
         """
         Delete trace feedback score
@@ -2572,6 +3259,10 @@ class AsyncRawTracesClient:
         id : str
 
         name : str
+
+        author : typing.Optional[str]
+
+        source_queue_id : typing.Optional[str]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -2585,6 +3276,8 @@ class AsyncRawTracesClient:
             method="POST",
             json={
                 "name": name,
+                "author": author,
+                "source_queue_id": source_queue_id,
             },
             headers={
                 "content-type": "application/json",
@@ -2651,7 +3344,11 @@ class AsyncRawTracesClient:
         raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
 
     async def delete_traces(
-        self, *, ids: typing.Sequence[str], request_options: typing.Optional[RequestOptions] = None
+        self,
+        *,
+        ids: typing.Sequence[str],
+        project_id: typing.Optional[str] = OMIT,
+        request_options: typing.Optional[RequestOptions] = None,
     ) -> AsyncHttpResponse[None]:
         """
         Delete traces
@@ -2659,6 +3356,10 @@ class AsyncRawTracesClient:
         Parameters
         ----------
         ids : typing.Sequence[str]
+            Ids of the traces to delete
+
+        project_id : typing.Optional[str]
+            Optional. Scopes the deletion to this project. When omitted, each trace's owning project is resolved automatically and the trace is deleted under its full key, so a trace can be deleted without knowing its project.
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -2672,6 +3373,7 @@ class AsyncRawTracesClient:
             method="POST",
             json={
                 "ids": ids,
+                "project_id": project_id,
             },
             headers={
                 "content-type": "application/json",
@@ -2682,14 +3384,25 @@ class AsyncRawTracesClient:
         try:
             if 200 <= _response.status_code < 300:
                 return AsyncHttpResponse(response=_response, data=None)
+            if _response.status_code == 422:
+                raise UnprocessableEntityError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        typing.Optional[typing.Any],
+                        parse_obj_as(
+                            type_=typing.Optional[typing.Any],  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
             _response_json = _response.json()
         except JSONDecodeError:
             raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
         raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
 
-    async def find_feedback_score_names_2(
+    async def find_feedback_score_names2(
         self, *, project_id: typing.Optional[str] = None, request_options: typing.Optional[RequestOptions] = None
-    ) -> AsyncHttpResponse[typing.List[str]]:
+    ) -> AsyncHttpResponse[FeedbackScoreNamesPublic]:
         """
         Find Feedback Score names
 
@@ -2702,7 +3415,7 @@ class AsyncRawTracesClient:
 
         Returns
         -------
-        AsyncHttpResponse[typing.List[str]]
+        AsyncHttpResponse[FeedbackScoreNamesPublic]
             Feedback Scores resource
         """
         _response = await self._client_wrapper.httpx_client.request(
@@ -2716,9 +3429,9 @@ class AsyncRawTracesClient:
         try:
             if 200 <= _response.status_code < 300:
                 _data = typing.cast(
-                    typing.List[str],
+                    FeedbackScoreNamesPublic,
                     parse_obj_as(
-                        type_=typing.List[str],  # type: ignore
+                        type_=FeedbackScoreNamesPublic,  # type: ignore
                         object_=_response.json(),
                     ),
                 )
@@ -2729,21 +3442,21 @@ class AsyncRawTracesClient:
         raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
 
     async def find_trace_threads_feedback_score_names(
-        self, *, project_id: str, request_options: typing.Optional[RequestOptions] = None
-    ) -> AsyncHttpResponse[typing.List[str]]:
+        self, *, project_id: typing.Optional[str] = None, request_options: typing.Optional[RequestOptions] = None
+    ) -> AsyncHttpResponse[FeedbackScoreNamesPublic]:
         """
         Find Trace Threads Feedback Score names
 
         Parameters
         ----------
-        project_id : str
+        project_id : typing.Optional[str]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
 
         Returns
         -------
-        AsyncHttpResponse[typing.List[str]]
+        AsyncHttpResponse[FeedbackScoreNamesPublic]
             Find Trace Threads Feedback Score names
         """
         _response = await self._client_wrapper.httpx_client.request(
@@ -2757,9 +3470,9 @@ class AsyncRawTracesClient:
         try:
             if 200 <= _response.status_code < 300:
                 _data = typing.cast(
-                    typing.List[str],
+                    FeedbackScoreNamesPublic,
                     parse_obj_as(
-                        type_=typing.List[str],  # type: ignore
+                        type_=FeedbackScoreNamesPublic,  # type: ignore
                         object_=_response.json(),
                     ),
                 )
@@ -2775,6 +3488,9 @@ class AsyncRawTracesClient:
         project_id: typing.Optional[str] = None,
         project_name: typing.Optional[str] = None,
         filters: typing.Optional[str] = None,
+        search: typing.Optional[str] = None,
+        from_time: typing.Optional[dt.datetime] = None,
+        to_time: typing.Optional[dt.datetime] = None,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> AsyncHttpResponse[ProjectStatsPublic]:
         """
@@ -2787,6 +3503,12 @@ class AsyncRawTracesClient:
         project_name : typing.Optional[str]
 
         filters : typing.Optional[str]
+
+        search : typing.Optional[str]
+
+        from_time : typing.Optional[dt.datetime]
+
+        to_time : typing.Optional[dt.datetime]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -2803,6 +3525,9 @@ class AsyncRawTracesClient:
                 "project_id": project_id,
                 "project_name": project_name,
                 "filters": filters,
+                "search": search,
+                "from_time": serialize_datetime(from_time) if from_time is not None else None,
+                "to_time": serialize_datetime(to_time) if to_time is not None else None,
             },
             request_options=request_options,
         )
@@ -2822,16 +3547,16 @@ class AsyncRawTracesClient:
         raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
 
     async def get_thread_comment(
-        self, comment_id: str, thread_id: str, *, request_options: typing.Optional[RequestOptions] = None
+        self, thread_id: str, comment_id: str, *, request_options: typing.Optional[RequestOptions] = None
     ) -> AsyncHttpResponse[Comment]:
         """
         Get thread comment
 
         Parameters
         ----------
-        comment_id : str
-
         thread_id : str
+
+        comment_id : str
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -2872,17 +3597,81 @@ class AsyncRawTracesClient:
             raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
         raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
 
+    async def get_trace_thread_stats(
+        self,
+        *,
+        project_id: typing.Optional[str] = None,
+        project_name: typing.Optional[str] = None,
+        filters: typing.Optional[str] = None,
+        search: typing.Optional[str] = None,
+        from_time: typing.Optional[dt.datetime] = None,
+        to_time: typing.Optional[dt.datetime] = None,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> AsyncHttpResponse[ProjectStatsPublic]:
+        """
+        Get trace thread stats
+
+        Parameters
+        ----------
+        project_id : typing.Optional[str]
+
+        project_name : typing.Optional[str]
+
+        filters : typing.Optional[str]
+
+        search : typing.Optional[str]
+
+        from_time : typing.Optional[dt.datetime]
+
+        to_time : typing.Optional[dt.datetime]
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        AsyncHttpResponse[ProjectStatsPublic]
+            Trace thread stats resource
+        """
+        _response = await self._client_wrapper.httpx_client.request(
+            "v1/private/traces/threads/stats",
+            method="GET",
+            params={
+                "project_id": project_id,
+                "project_name": project_name,
+                "filters": filters,
+                "search": search,
+                "from_time": serialize_datetime(from_time) if from_time is not None else None,
+                "to_time": serialize_datetime(to_time) if to_time is not None else None,
+            },
+            request_options=request_options,
+        )
+        try:
+            if 200 <= _response.status_code < 300:
+                _data = typing.cast(
+                    ProjectStatsPublic,
+                    parse_obj_as(
+                        type_=ProjectStatsPublic,  # type: ignore
+                        object_=_response.json(),
+                    ),
+                )
+                return AsyncHttpResponse(response=_response, data=_data)
+            _response_json = _response.json()
+        except JSONDecodeError:
+            raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
+        raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
+
     async def get_trace_comment(
-        self, comment_id: str, trace_id: str, *, request_options: typing.Optional[RequestOptions] = None
+        self, trace_id: str, comment_id: str, *, request_options: typing.Optional[RequestOptions] = None
     ) -> AsyncHttpResponse[Comment]:
         """
         Get trace comment
 
         Parameters
         ----------
-        comment_id : str
-
         trace_id : str
+
+        comment_id : str
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -2929,6 +3718,7 @@ class AsyncRawTracesClient:
         thread_id: str,
         project_name: typing.Optional[str] = OMIT,
         project_id: typing.Optional[str] = OMIT,
+        truncate: typing.Optional[bool] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> AsyncHttpResponse[TraceThread]:
         """
@@ -2941,6 +3731,8 @@ class AsyncRawTracesClient:
         project_name : typing.Optional[str]
 
         project_id : typing.Optional[str]
+
+        truncate : typing.Optional[bool]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -2957,6 +3749,7 @@ class AsyncRawTracesClient:
                 "project_name": project_name,
                 "project_id": project_id,
                 "thread_id": thread_id,
+                "truncate": truncate,
             },
             headers={
                 "content-type": "application/json",
@@ -2998,8 +3791,13 @@ class AsyncRawTracesClient:
         project_name: typing.Optional[str] = None,
         project_id: typing.Optional[str] = None,
         truncate: typing.Optional[bool] = None,
+        strip_attachments: typing.Optional[bool] = None,
         filters: typing.Optional[str] = None,
         sorting: typing.Optional[str] = None,
+        search: typing.Optional[str] = None,
+        from_time: typing.Optional[dt.datetime] = None,
+        to_time: typing.Optional[dt.datetime] = None,
+        annotation_queue_id: typing.Optional[str] = None,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> AsyncHttpResponse[TraceThreadPage]:
         """
@@ -3017,9 +3815,19 @@ class AsyncRawTracesClient:
 
         truncate : typing.Optional[bool]
 
+        strip_attachments : typing.Optional[bool]
+
         filters : typing.Optional[str]
 
         sorting : typing.Optional[str]
+
+        search : typing.Optional[str]
+
+        from_time : typing.Optional[dt.datetime]
+
+        to_time : typing.Optional[dt.datetime]
+
+        annotation_queue_id : typing.Optional[str]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -3038,8 +3846,13 @@ class AsyncRawTracesClient:
                 "project_name": project_name,
                 "project_id": project_id,
                 "truncate": truncate,
+                "strip_attachments": strip_attachments,
                 "filters": filters,
                 "sorting": sorting,
+                "search": search,
+                "from_time": serialize_datetime(from_time) if from_time is not None else None,
+                "to_time": serialize_datetime(to_time) if to_time is not None else None,
+                "annotation_queue_id": annotation_queue_id,
             },
             request_options=request_options,
         )
@@ -3064,6 +3877,7 @@ class AsyncRawTracesClient:
         thread_id: str,
         project_name: typing.Optional[str] = OMIT,
         project_id: typing.Optional[str] = OMIT,
+        truncate: typing.Optional[bool] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> AsyncHttpResponse[None]:
         """
@@ -3076,6 +3890,8 @@ class AsyncRawTracesClient:
         project_name : typing.Optional[str]
 
         project_id : typing.Optional[str]
+
+        truncate : typing.Optional[bool]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -3091,6 +3907,7 @@ class AsyncRawTracesClient:
                 "project_name": project_name,
                 "project_id": project_id,
                 "thread_id": thread_id,
+                "truncate": truncate,
             },
             headers={
                 "content-type": "application/json",
@@ -3200,6 +4017,9 @@ class AsyncRawTracesClient:
         last_retrieved_thread_model_id: typing.Optional[str] = OMIT,
         limit: typing.Optional[int] = OMIT,
         truncate: typing.Optional[bool] = OMIT,
+        strip_attachments: typing.Optional[bool] = OMIT,
+        from_time: typing.Optional[dt.datetime] = OMIT,
+        to_time: typing.Optional[dt.datetime] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> typing.AsyncIterator[AsyncHttpResponse[typing.AsyncIterator[bytes]]]:
         """
@@ -3219,7 +4039,16 @@ class AsyncRawTracesClient:
             Max number of trace thread to be streamed
 
         truncate : typing.Optional[bool]
-            Truncate image included in either input, output or metadata
+            Truncate input, output and metadata to slim payloads
+
+        strip_attachments : typing.Optional[bool]
+            If true, returns attachment references like [file.png]; if false, downloads and reinjects stripped attachments
+
+        from_time : typing.Optional[dt.datetime]
+            Filter trace threads created from this time (ISO-8601 format).
+
+        to_time : typing.Optional[dt.datetime]
+            Filter trace threads created up to this time (ISO-8601 format). If not provided, defaults to current time. Must be after 'from_time'.
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration. You can pass in configuration such as `chunk_size`, and more to customize the request and response.
@@ -3241,6 +4070,9 @@ class AsyncRawTracesClient:
                 "last_retrieved_thread_model_id": last_retrieved_thread_model_id,
                 "limit": limit,
                 "truncate": truncate,
+                "strip_attachments": strip_attachments,
+                "from_time": from_time,
+                "to_time": to_time,
             },
             headers={
                 "content-type": "application/json",
@@ -3288,6 +4120,10 @@ class AsyncRawTracesClient:
         last_retrieved_id: typing.Optional[str] = OMIT,
         limit: typing.Optional[int] = OMIT,
         truncate: typing.Optional[bool] = OMIT,
+        strip_attachments: typing.Optional[bool] = OMIT,
+        exclude: typing.Optional[typing.Sequence[TraceSearchStreamRequestPublicExcludeItem]] = OMIT,
+        from_time: typing.Optional[dt.datetime] = OMIT,
+        to_time: typing.Optional[dt.datetime] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> typing.AsyncIterator[AsyncHttpResponse[typing.AsyncIterator[bytes]]]:
         """
@@ -3307,7 +4143,19 @@ class AsyncRawTracesClient:
             Max number of traces to be streamed
 
         truncate : typing.Optional[bool]
-            Truncate image included in either input, output or metadata
+            Truncate input, output and metadata to slim payloads
+
+        strip_attachments : typing.Optional[bool]
+            If true, returns attachment references like [file.png]; if false, downloads and reinjects stripped attachments
+
+        exclude : typing.Optional[typing.Sequence[TraceSearchStreamRequestPublicExcludeItem]]
+            Fields to exclude from the response
+
+        from_time : typing.Optional[dt.datetime]
+            Filter traces created from this time (ISO-8601 format).
+
+        to_time : typing.Optional[dt.datetime]
+            Filter traces created up to this time (ISO-8601 format). If not provided, defaults to current time. Must be after 'from_time'.
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration. You can pass in configuration such as `chunk_size`, and more to customize the request and response.
@@ -3329,6 +4177,10 @@ class AsyncRawTracesClient:
                 "last_retrieved_id": last_retrieved_id,
                 "limit": limit,
                 "truncate": truncate,
+                "strip_attachments": strip_attachments,
+                "exclude": exclude,
+                "from_time": from_time,
+                "to_time": to_time,
             },
             headers={
                 "content-type": "application/json",
@@ -3377,16 +4229,69 @@ class AsyncRawTracesClient:
 
             yield await stream()
 
+    async def exist(
+        self,
+        *,
+        project_id: typing.Optional[str] = None,
+        project_name: typing.Optional[str] = None,
+        source: typing.Optional[str] = None,
+        thread_only: typing.Optional[bool] = None,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> AsyncHttpResponse[ExistenceResponse]:
+        """
+        Returns whether the project has at least one trace matching the given scope. Cheap existence probe (LIMIT 1) used to drive empty-state decisions without scanning or aggregating the whole project.
+
+        Parameters
+        ----------
+        project_id : typing.Optional[str]
+
+        project_name : typing.Optional[str]
+
+        source : typing.Optional[str]
+
+        thread_only : typing.Optional[bool]
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        AsyncHttpResponse[ExistenceResponse]
+            Trace existence
+        """
+        _response = await self._client_wrapper.httpx_client.request(
+            "v1/private/traces/exists",
+            method="GET",
+            params={
+                "project_id": project_id,
+                "project_name": project_name,
+                "source": source,
+                "thread_only": thread_only,
+            },
+            request_options=request_options,
+        )
+        try:
+            if 200 <= _response.status_code < 300:
+                _data = typing.cast(
+                    ExistenceResponse,
+                    parse_obj_as(
+                        type_=ExistenceResponse,  # type: ignore
+                        object_=_response.json(),
+                    ),
+                )
+                return AsyncHttpResponse(response=_response, data=_data)
+            _response_json = _response.json()
+        except JSONDecodeError:
+            raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
+        raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
+
     async def update_thread(
         self,
         thread_model_id: str,
         *,
-        text: str,
-        id: typing.Optional[str] = OMIT,
-        created_at: typing.Optional[dt.datetime] = OMIT,
-        last_updated_at: typing.Optional[dt.datetime] = OMIT,
-        created_by: typing.Optional[str] = OMIT,
-        last_updated_by: typing.Optional[str] = OMIT,
+        tags: typing.Optional[typing.Sequence[str]] = OMIT,
+        tags_to_add: typing.Optional[typing.Sequence[str]] = OMIT,
+        tags_to_remove: typing.Optional[typing.Sequence[str]] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> AsyncHttpResponse[None]:
         """
@@ -3396,17 +4301,11 @@ class AsyncRawTracesClient:
         ----------
         thread_model_id : str
 
-        text : str
+        tags : typing.Optional[typing.Sequence[str]]
 
-        id : typing.Optional[str]
+        tags_to_add : typing.Optional[typing.Sequence[str]]
 
-        created_at : typing.Optional[dt.datetime]
-
-        last_updated_at : typing.Optional[dt.datetime]
-
-        created_by : typing.Optional[str]
-
-        last_updated_by : typing.Optional[str]
+        tags_to_remove : typing.Optional[typing.Sequence[str]]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -3419,12 +4318,9 @@ class AsyncRawTracesClient:
             f"v1/private/traces/threads/{jsonable_encoder(thread_model_id)}",
             method="PATCH",
             json={
-                "id": id,
-                "text": text,
-                "created_at": created_at,
-                "last_updated_at": last_updated_at,
-                "created_by": created_by,
-                "last_updated_by": last_updated_by,
+                "tags": tags,
+                "tags_to_add": tags_to_add,
+                "tags_to_remove": tags_to_remove,
             },
             headers={
                 "content-type": "application/json",
@@ -3457,6 +4353,7 @@ class AsyncRawTracesClient:
         *,
         text: str,
         id: typing.Optional[str] = OMIT,
+        source_queue_id: typing.Optional[str] = OMIT,
         created_at: typing.Optional[dt.datetime] = OMIT,
         last_updated_at: typing.Optional[dt.datetime] = OMIT,
         created_by: typing.Optional[str] = OMIT,
@@ -3473,6 +4370,8 @@ class AsyncRawTracesClient:
         text : str
 
         id : typing.Optional[str]
+
+        source_queue_id : typing.Optional[str]
 
         created_at : typing.Optional[dt.datetime]
 
@@ -3495,6 +4394,7 @@ class AsyncRawTracesClient:
             json={
                 "id": id,
                 "text": text,
+                "source_queue_id": source_queue_id,
                 "created_at": created_at,
                 "last_updated_at": last_updated_at,
                 "created_by": created_by,
@@ -3531,6 +4431,7 @@ class AsyncRawTracesClient:
         *,
         text: str,
         id: typing.Optional[str] = OMIT,
+        source_queue_id: typing.Optional[str] = OMIT,
         created_at: typing.Optional[dt.datetime] = OMIT,
         last_updated_at: typing.Optional[dt.datetime] = OMIT,
         created_by: typing.Optional[str] = OMIT,
@@ -3547,6 +4448,8 @@ class AsyncRawTracesClient:
         text : str
 
         id : typing.Optional[str]
+
+        source_queue_id : typing.Optional[str]
 
         created_at : typing.Optional[dt.datetime]
 
@@ -3569,6 +4472,7 @@ class AsyncRawTracesClient:
             json={
                 "id": id,
                 "text": text,
+                "source_queue_id": source_queue_id,
                 "created_at": created_at,
                 "last_updated_at": last_updated_at,
                 "created_by": created_by,

@@ -11,6 +11,8 @@ import com.fasterxml.jackson.databind.annotation.JsonNaming;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.PositiveOrZero;
+import jakarta.validation.constraints.Size;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
@@ -28,7 +30,7 @@ import static com.comet.opik.utils.ValidationUtils.NULL_OR_NOT_BLANK;
 @JsonIgnoreProperties(ignoreUnknown = true)
 @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
 public record Trace(
-        @JsonView( {
+        @JsonView({
                 Trace.View.Public.class, Trace.View.Write.class}) UUID id,
         @JsonView({
                 Trace.View.Write.class}) @Pattern(regexp = NULL_OR_NOT_BLANK, message = "must not be blank") @Schema(description = "If null, the default project is used") String projectName,
@@ -40,7 +42,8 @@ public record Trace(
                 Trace.View.Write.class}) JsonNode input,
         @Schema(implementation = JsonListString.class) @JsonView({Trace.View.Public.class,
                 Trace.View.Write.class}) JsonNode output,
-        @JsonView({Trace.View.Public.class, Trace.View.Write.class}) JsonNode metadata,
+        @Schema(implementation = JsonListString.class) @JsonView({Trace.View.Public.class,
+                Trace.View.Write.class}) JsonNode metadata,
         @JsonView({Trace.View.Public.class, Trace.View.Write.class}) Set<String> tags,
         @JsonView({Trace.View.Public.class, Trace.View.Write.class}) ErrorInfo errorInfo,
         @JsonView({Trace.View.Public.class}) @Schema(accessMode = Schema.AccessMode.READ_ONLY) Map<String, Long> usage,
@@ -52,6 +55,8 @@ public record Trace(
         @JsonView({
                 Trace.View.Public.class}) @Schema(accessMode = Schema.AccessMode.READ_ONLY) List<FeedbackScore> feedbackScores,
         @JsonView({
+                Trace.View.Public.class}) @Schema(accessMode = Schema.AccessMode.READ_ONLY, description = "Aggregated feedback scores from all spans in this trace, averaged by score name") List<FeedbackScore> spanFeedbackScores,
+        @JsonView({
                 Trace.View.Public.class}) @Schema(accessMode = Schema.AccessMode.READ_ONLY) List<Comment> comments,
         @JsonView({
                 Trace.View.Public.class}) @Schema(accessMode = Schema.AccessMode.READ_ONLY) List<GuardrailsValidation> guardrailsValidations,
@@ -61,11 +66,22 @@ public record Trace(
                 Trace.View.Public.class}) @Schema(accessMode = Schema.AccessMode.READ_ONLY) int spanCount,
         @JsonView({
                 Trace.View.Public.class}) @Schema(accessMode = Schema.AccessMode.READ_ONLY, description = "Duration in milliseconds as a decimal number to support sub-millisecond precision") Double duration,
+        @JsonView({Trace.View.Public.class,
+                Trace.View.Write.class}) @Schema(description = "Time to first token in milliseconds") @PositiveOrZero Double ttft,
         @JsonView({Trace.View.Public.class, Trace.View.Write.class}) String threadId,
         @JsonView({
                 Trace.View.Public.class}) @Schema(accessMode = Schema.AccessMode.READ_ONLY) VisibilityMode visibilityMode,
         @JsonView({
-                Trace.View.Public.class}) @Schema(accessMode = Schema.AccessMode.READ_ONLY) int llmSpanCount){
+                Trace.View.Public.class}) @Schema(accessMode = Schema.AccessMode.READ_ONLY) int llmSpanCount,
+        @JsonView({
+                Trace.View.Public.class}) @Schema(accessMode = Schema.AccessMode.READ_ONLY) boolean hasToolSpans,
+        @JsonView({
+                Trace.View.Public.class}) @Schema(accessMode = Schema.AccessMode.READ_ONLY, description = "List of unique provider names from all spans in this trace, sorted alphabetically") List<String> providers,
+        @JsonView({
+                Trace.View.Public.class}) @Schema(accessMode = Schema.AccessMode.READ_ONLY, description = "Experiment associated with this trace") ExperimentItemReference experiment,
+        @JsonView({Trace.View.Public.class, Trace.View.Write.class}) Source source,
+        @JsonView({Trace.View.Public.class,
+                Trace.View.Write.class}) @Size(max = 150, message = "cannot exceed 150 characters") String environment) {
 
     @Builder(toBuilder = true)
     public record TracePage(
@@ -97,14 +113,21 @@ public record Trace(
         CREATED_BY("created_by"),
         LAST_UPDATED_BY("last_updated_by"),
         FEEDBACK_SCORES("feedback_scores"),
+        SPAN_FEEDBACK_SCORES("span_feedback_scores"),
         COMMENTS("comments"),
         GUARDRAILS_VALIDATIONS("guardrails_validations"),
         TOTAL_ESTIMATED_COST("total_estimated_cost"),
         SPAN_COUNT("span_count"),
         LLM_SPAN_COUNT("llm_span_count"),
+        HAS_TOOL_SPANS("has_tool_spans"),
         DURATION("duration"),
+        TTFT("ttft"),
         THREAD_ID("thread_id"),
         VISIBILITY_MODE("visibility_mode"),
+        PROVIDERS("providers"),
+        EXPERIMENT("experiment"),
+        SOURCE("source"),
+        ENVIRONMENT("environment"),
         ;
 
         @JsonValue

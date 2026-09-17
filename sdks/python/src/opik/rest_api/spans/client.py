@@ -8,24 +8,29 @@ from ..core.request_options import RequestOptions
 from ..types.comment import Comment
 from ..types.error_info import ErrorInfo
 from ..types.error_info_write import ErrorInfoWrite
+from ..types.existence_response import ExistenceResponse
 from ..types.feedback_score_batch_item import FeedbackScoreBatchItem
+from ..types.feedback_score_names_public import FeedbackScoreNamesPublic
 from ..types.feedback_score_source import FeedbackScoreSource
 from ..types.json_list_string import JsonListString
 from ..types.json_list_string_write import JsonListStringWrite
-from ..types.json_node import JsonNode
-from ..types.json_node_write import JsonNodeWrite
 from ..types.project_stats_public import ProjectStatsPublic
 from ..types.span_filter_public import SpanFilterPublic
 from ..types.span_page_public import SpanPagePublic
 from ..types.span_public import SpanPublic
+from ..types.span_update import SpanUpdate
+from ..types.span_update_source import SpanUpdateSource
+from ..types.span_update_type import SpanUpdateType
 from ..types.span_write import SpanWrite
+from ..types.span_write_source import SpanWriteSource
 from ..types.span_write_type import SpanWriteType
+from ..types.value_entry import ValueEntry
 from .raw_client import AsyncRawSpansClient, RawSpansClient
-from .types.find_feedback_score_names_1_request_type import FindFeedbackScoreNames1RequestType
+from .types.find_feedback_score_names1request_type import FindFeedbackScoreNames1RequestType
 from .types.get_span_stats_request_type import GetSpanStatsRequestType
 from .types.get_spans_by_project_request_type import GetSpansByProjectRequestType
+from .types.span_search_stream_request_public_exclude_item import SpanSearchStreamRequestPublicExcludeItem
 from .types.span_search_stream_request_public_type import SpanSearchStreamRequestPublicType
-from .types.span_update_type import SpanUpdateType
 
 # this is used as the default value for optional parameters
 OMIT = typing.cast(typing.Any, ...)
@@ -52,6 +57,7 @@ class SpansClient:
         *,
         text: str,
         id: typing.Optional[str] = OMIT,
+        source_queue_id: typing.Optional[str] = OMIT,
         created_at: typing.Optional[dt.datetime] = OMIT,
         last_updated_at: typing.Optional[dt.datetime] = OMIT,
         created_by: typing.Optional[str] = OMIT,
@@ -68,6 +74,8 @@ class SpansClient:
         text : str
 
         id : typing.Optional[str]
+
+        source_queue_id : typing.Optional[str]
 
         created_at : typing.Optional[dt.datetime]
 
@@ -94,6 +102,7 @@ class SpansClient:
             id_,
             text=text,
             id=id,
+            source_queue_id=source_queue_id,
             created_at=created_at,
             last_updated_at=last_updated_at,
             created_by=created_by,
@@ -111,10 +120,12 @@ class SpansClient:
         source: FeedbackScoreSource,
         category_name: typing.Optional[str] = OMIT,
         reason: typing.Optional[str] = OMIT,
+        source_queue_id: typing.Optional[str] = OMIT,
         created_at: typing.Optional[dt.datetime] = OMIT,
         last_updated_at: typing.Optional[dt.datetime] = OMIT,
         created_by: typing.Optional[str] = OMIT,
         last_updated_by: typing.Optional[str] = OMIT,
+        value_by_author: typing.Optional[typing.Dict[str, ValueEntry]] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> None:
         """
@@ -134,6 +145,8 @@ class SpansClient:
 
         reason : typing.Optional[str]
 
+        source_queue_id : typing.Optional[str]
+
         created_at : typing.Optional[dt.datetime]
 
         last_updated_at : typing.Optional[dt.datetime]
@@ -141,6 +154,8 @@ class SpansClient:
         created_by : typing.Optional[str]
 
         last_updated_by : typing.Optional[str]
+
+        value_by_author : typing.Optional[typing.Dict[str, ValueEntry]]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -162,11 +177,81 @@ class SpansClient:
             source=source,
             category_name=category_name,
             reason=reason,
+            source_queue_id=source_queue_id,
             created_at=created_at,
             last_updated_at=last_updated_at,
             created_by=created_by,
             last_updated_by=last_updated_by,
+            value_by_author=value_by_author,
             request_options=request_options,
+        )
+        return _response.data
+
+    def create_spans(
+        self, *, spans: typing.Sequence[SpanWrite], request_options: typing.Optional[RequestOptions] = None
+    ) -> None:
+        """
+        Create spans
+
+        Parameters
+        ----------
+        spans : typing.Sequence[SpanWrite]
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        None
+
+        Examples
+        --------
+        from Opik import OpikApi
+        from Opik import SpanWrite
+        import datetime
+        client = OpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        client.spans.create_spans(spans=[SpanWrite(start_time=datetime.datetime.fromisoformat("2024-01-15 09:30:00+00:00", ), )], )
+        """
+        _response = self._raw_client.create_spans(spans=spans, request_options=request_options)
+        return _response.data
+
+    def batch_update_spans(
+        self,
+        *,
+        ids: typing.Sequence[str],
+        update: SpanUpdate,
+        merge_tags: typing.Optional[bool] = OMIT,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> None:
+        """
+        Update multiple spans
+
+        Parameters
+        ----------
+        ids : typing.Sequence[str]
+            List of span IDs to update (max 1000)
+
+        update : SpanUpdate
+
+        merge_tags : typing.Optional[bool]
+            If true, merge tags with existing tags instead of replacing them. Default: false
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        None
+
+        Examples
+        --------
+        from Opik import OpikApi
+        from Opik import SpanUpdate
+        client = OpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        client.spans.batch_update_spans(ids=['ids'], update=SpanUpdate(trace_id='trace_id', ), )
+        """
+        _response = self._raw_client.batch_update_spans(
+            ids=ids, update=update, merge_tags=merge_tags, request_options=request_options
         )
         return _response.data
 
@@ -181,8 +266,12 @@ class SpansClient:
         type: typing.Optional[GetSpansByProjectRequestType] = None,
         filters: typing.Optional[str] = None,
         truncate: typing.Optional[bool] = None,
+        strip_attachments: typing.Optional[bool] = None,
         sorting: typing.Optional[str] = None,
         exclude: typing.Optional[str] = None,
+        search: typing.Optional[str] = None,
+        from_time: typing.Optional[dt.datetime] = None,
+        to_time: typing.Optional[dt.datetime] = None,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> SpanPagePublic:
         """
@@ -206,9 +295,17 @@ class SpansClient:
 
         truncate : typing.Optional[bool]
 
+        strip_attachments : typing.Optional[bool]
+
         sorting : typing.Optional[str]
 
         exclude : typing.Optional[str]
+
+        search : typing.Optional[str]
+
+        from_time : typing.Optional[dt.datetime]
+
+        to_time : typing.Optional[dt.datetime]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -233,8 +330,12 @@ class SpansClient:
             type=type,
             filters=filters,
             truncate=truncate,
+            strip_attachments=strip_attachments,
             sorting=sorting,
             exclude=exclude,
+            search=search,
+            from_time=from_time,
+            to_time=to_time,
             request_options=request_options,
         )
         return _response.data
@@ -252,7 +353,7 @@ class SpansClient:
         end_time: typing.Optional[dt.datetime] = OMIT,
         input: typing.Optional[JsonListStringWrite] = OMIT,
         output: typing.Optional[JsonListStringWrite] = OMIT,
-        metadata: typing.Optional[JsonNodeWrite] = OMIT,
+        metadata: typing.Optional[JsonListStringWrite] = OMIT,
         model: typing.Optional[str] = OMIT,
         provider: typing.Optional[str] = OMIT,
         tags: typing.Optional[typing.Sequence[str]] = OMIT,
@@ -261,6 +362,9 @@ class SpansClient:
         last_updated_at: typing.Optional[dt.datetime] = OMIT,
         total_estimated_cost: typing.Optional[float] = OMIT,
         total_estimated_cost_version: typing.Optional[str] = OMIT,
+        ttft: typing.Optional[float] = OMIT,
+        source: typing.Optional[SpanWriteSource] = OMIT,
+        environment: typing.Optional[str] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> None:
         """
@@ -289,7 +393,7 @@ class SpansClient:
 
         output : typing.Optional[JsonListStringWrite]
 
-        metadata : typing.Optional[JsonNodeWrite]
+        metadata : typing.Optional[JsonListStringWrite]
 
         model : typing.Optional[str]
 
@@ -306,6 +410,13 @@ class SpansClient:
         total_estimated_cost : typing.Optional[float]
 
         total_estimated_cost_version : typing.Optional[str]
+
+        ttft : typing.Optional[float]
+            Time to first token in milliseconds
+
+        source : typing.Optional[SpanWriteSource]
+
+        environment : typing.Optional[str]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -341,45 +452,28 @@ class SpansClient:
             last_updated_at=last_updated_at,
             total_estimated_cost=total_estimated_cost,
             total_estimated_cost_version=total_estimated_cost_version,
+            ttft=ttft,
+            source=source,
+            environment=environment,
             request_options=request_options,
         )
         return _response.data
 
-    def create_spans(
-        self, *, spans: typing.Sequence[SpanWrite], request_options: typing.Optional[RequestOptions] = None
-    ) -> None:
-        """
-        Create spans
-
-        Parameters
-        ----------
-        spans : typing.Sequence[SpanWrite]
-
-        request_options : typing.Optional[RequestOptions]
-            Request-specific configuration.
-
-        Returns
-        -------
-        None
-
-        Examples
-        --------
-        from Opik import OpikApi
-        from Opik import SpanWrite
-        import datetime
-        client = OpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
-        client.spans.create_spans(spans=[SpanWrite(start_time=datetime.datetime.fromisoformat("2024-01-15 09:30:00+00:00", ), )], )
-        """
-        _response = self._raw_client.create_spans(spans=spans, request_options=request_options)
-        return _response.data
-
-    def get_span_by_id(self, id: str, *, request_options: typing.Optional[RequestOptions] = None) -> SpanPublic:
+    def get_span_by_id(
+        self,
+        id: str,
+        *,
+        strip_attachments: typing.Optional[bool] = None,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> SpanPublic:
         """
         Get span by id
 
         Parameters
         ----------
         id : str
+
+        strip_attachments : typing.Optional[bool]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -395,7 +489,9 @@ class SpansClient:
         client = OpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
         client.spans.get_span_by_id(id='id', )
         """
-        _response = self._raw_client.get_span_by_id(id, request_options=request_options)
+        _response = self._raw_client.get_span_by_id(
+            id, strip_attachments=strip_attachments, request_options=request_options
+        )
         return _response.data
 
     def delete_span_by_id(self, id: str, *, request_options: typing.Optional[RequestOptions] = None) -> None:
@@ -435,13 +531,18 @@ class SpansClient:
         end_time: typing.Optional[dt.datetime] = OMIT,
         input: typing.Optional[JsonListString] = OMIT,
         output: typing.Optional[JsonListString] = OMIT,
-        metadata: typing.Optional[JsonNode] = OMIT,
+        metadata: typing.Optional[JsonListString] = OMIT,
         model: typing.Optional[str] = OMIT,
         provider: typing.Optional[str] = OMIT,
         tags: typing.Optional[typing.Sequence[str]] = OMIT,
+        tags_to_add: typing.Optional[typing.Sequence[str]] = OMIT,
+        tags_to_remove: typing.Optional[typing.Sequence[str]] = OMIT,
         usage: typing.Optional[typing.Dict[str, int]] = OMIT,
         total_estimated_cost: typing.Optional[float] = OMIT,
         error_info: typing.Optional[ErrorInfo] = OMIT,
+        ttft: typing.Optional[float] = OMIT,
+        source: typing.Optional[SpanUpdateSource] = OMIT,
+        environment: typing.Optional[str] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> None:
         """
@@ -471,19 +572,32 @@ class SpansClient:
 
         output : typing.Optional[JsonListString]
 
-        metadata : typing.Optional[JsonNode]
+        metadata : typing.Optional[JsonListString]
 
         model : typing.Optional[str]
 
         provider : typing.Optional[str]
 
         tags : typing.Optional[typing.Sequence[str]]
+            Tags
+
+        tags_to_add : typing.Optional[typing.Sequence[str]]
+            Tags to add
+
+        tags_to_remove : typing.Optional[typing.Sequence[str]]
+            Tags to remove
 
         usage : typing.Optional[typing.Dict[str, int]]
 
         total_estimated_cost : typing.Optional[float]
 
         error_info : typing.Optional[ErrorInfo]
+
+        ttft : typing.Optional[float]
+
+        source : typing.Optional[SpanUpdateSource]
+
+        environment : typing.Optional[str]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -513,9 +627,14 @@ class SpansClient:
             model=model,
             provider=provider,
             tags=tags,
+            tags_to_add=tags_to_add,
+            tags_to_remove=tags_to_remove,
             usage=usage,
             total_estimated_cost=total_estimated_cost,
             error_info=error_info,
+            ttft=ttft,
+            source=source,
+            environment=environment,
             request_options=request_options,
         )
         return _response.data
@@ -547,7 +666,13 @@ class SpansClient:
         return _response.data
 
     def delete_span_feedback_score(
-        self, id: str, *, name: str, request_options: typing.Optional[RequestOptions] = None
+        self,
+        id: str,
+        *,
+        name: str,
+        author: typing.Optional[str] = OMIT,
+        source_queue_id: typing.Optional[str] = OMIT,
+        request_options: typing.Optional[RequestOptions] = None,
     ) -> None:
         """
         Delete span feedback score
@@ -557,6 +682,10 @@ class SpansClient:
         id : str
 
         name : str
+
+        author : typing.Optional[str]
+
+        source_queue_id : typing.Optional[str]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -571,16 +700,18 @@ class SpansClient:
         client = OpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
         client.spans.delete_span_feedback_score(id='id', name='name', )
         """
-        _response = self._raw_client.delete_span_feedback_score(id, name=name, request_options=request_options)
+        _response = self._raw_client.delete_span_feedback_score(
+            id, name=name, author=author, source_queue_id=source_queue_id, request_options=request_options
+        )
         return _response.data
 
-    def find_feedback_score_names_1(
+    def find_feedback_score_names1(
         self,
         *,
         project_id: typing.Optional[str] = None,
         type: typing.Optional[FindFeedbackScoreNames1RequestType] = None,
         request_options: typing.Optional[RequestOptions] = None,
-    ) -> typing.List[str]:
+    ) -> FeedbackScoreNamesPublic:
         """
         Find Feedback Score names
 
@@ -595,31 +726,31 @@ class SpansClient:
 
         Returns
         -------
-        typing.List[str]
+        FeedbackScoreNamesPublic
             Feedback Scores resource
 
         Examples
         --------
         from Opik import OpikApi
         client = OpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
-        client.spans.find_feedback_score_names_1()
+        client.spans.find_feedback_score_names1()
         """
-        _response = self._raw_client.find_feedback_score_names_1(
+        _response = self._raw_client.find_feedback_score_names1(
             project_id=project_id, type=type, request_options=request_options
         )
         return _response.data
 
     def get_span_comment(
-        self, comment_id: str, span_id: str, *, request_options: typing.Optional[RequestOptions] = None
+        self, span_id: str, comment_id: str, *, request_options: typing.Optional[RequestOptions] = None
     ) -> Comment:
         """
         Get span comment
 
         Parameters
         ----------
-        comment_id : str
-
         span_id : str
+
+        comment_id : str
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -633,9 +764,9 @@ class SpansClient:
         --------
         from Opik import OpikApi
         client = OpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
-        client.spans.get_span_comment(comment_id='commentId', span_id='spanId', )
+        client.spans.get_span_comment(span_id='spanId', comment_id='commentId', )
         """
-        _response = self._raw_client.get_span_comment(comment_id, span_id, request_options=request_options)
+        _response = self._raw_client.get_span_comment(span_id, comment_id, request_options=request_options)
         return _response.data
 
     def get_span_stats(
@@ -646,6 +777,9 @@ class SpansClient:
         trace_id: typing.Optional[str] = None,
         type: typing.Optional[GetSpanStatsRequestType] = None,
         filters: typing.Optional[str] = None,
+        search: typing.Optional[str] = None,
+        from_time: typing.Optional[dt.datetime] = None,
+        to_time: typing.Optional[dt.datetime] = None,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> ProjectStatsPublic:
         """
@@ -662,6 +796,12 @@ class SpansClient:
         type : typing.Optional[GetSpanStatsRequestType]
 
         filters : typing.Optional[str]
+
+        search : typing.Optional[str]
+
+        from_time : typing.Optional[dt.datetime]
+
+        to_time : typing.Optional[dt.datetime]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -683,6 +823,9 @@ class SpansClient:
             trace_id=trace_id,
             type=type,
             filters=filters,
+            search=search,
+            from_time=from_time,
+            to_time=to_time,
             request_options=request_options,
         )
         return _response.data
@@ -712,7 +855,7 @@ class SpansClient:
         from Opik import OpikApi
         from Opik import FeedbackScoreBatchItem
         client = OpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
-        client.spans.score_batch_of_spans(scores=[FeedbackScoreBatchItem(id='id', name='name', value=1.1, source="ui", )], )
+        client.spans.score_batch_of_spans(scores=[FeedbackScoreBatchItem(name='name', value=1.1, source="ui", id='id', )], )
         """
         _response = self._raw_client.score_batch_of_spans(scores=scores, request_options=request_options)
         return _response.data
@@ -728,6 +871,9 @@ class SpansClient:
         limit: typing.Optional[int] = OMIT,
         last_retrieved_id: typing.Optional[str] = OMIT,
         truncate: typing.Optional[bool] = OMIT,
+        exclude: typing.Optional[typing.Sequence[SpanSearchStreamRequestPublicExcludeItem]] = OMIT,
+        from_time: typing.Optional[dt.datetime] = OMIT,
+        to_time: typing.Optional[dt.datetime] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> typing.Iterator[bytes]:
         """
@@ -753,6 +899,15 @@ class SpansClient:
         truncate : typing.Optional[bool]
             Truncate image included in either input, output or metadata
 
+        exclude : typing.Optional[typing.Sequence[SpanSearchStreamRequestPublicExcludeItem]]
+            Fields to exclude from the response
+
+        from_time : typing.Optional[dt.datetime]
+            Filter spans created from this time (ISO-8601 format).
+
+        to_time : typing.Optional[dt.datetime]
+            Filter spans created up to this time (ISO-8601 format). If not provided, defaults to current time. Must be after 'from_time'.
+
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration. You can pass in configuration such as `chunk_size`, and more to customize the request and response.
 
@@ -760,6 +915,12 @@ class SpansClient:
         -------
         typing.Iterator[bytes]
             Spans stream or error during process
+
+        Examples
+        --------
+        from Opik import OpikApi
+        client = OpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        client.spans.search_spans()
         """
         with self._raw_client.search_spans(
             trace_id=trace_id,
@@ -770,9 +931,50 @@ class SpansClient:
             limit=limit,
             last_retrieved_id=last_retrieved_id,
             truncate=truncate,
+            exclude=exclude,
+            from_time=from_time,
+            to_time=to_time,
             request_options=request_options,
         ) as r:
             yield from r.data
+
+    def exist(
+        self,
+        *,
+        project_id: typing.Optional[str] = None,
+        project_name: typing.Optional[str] = None,
+        source: typing.Optional[str] = None,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> ExistenceResponse:
+        """
+        Returns whether the project has at least one span matching the given scope. Cheap existence probe (LIMIT 1) used to drive empty-state decisions without scanning or aggregating the whole project.
+
+        Parameters
+        ----------
+        project_id : typing.Optional[str]
+
+        project_name : typing.Optional[str]
+
+        source : typing.Optional[str]
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        ExistenceResponse
+            Span existence
+
+        Examples
+        --------
+        from Opik import OpikApi
+        client = OpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        client.spans.exist()
+        """
+        _response = self._raw_client.exist(
+            project_id=project_id, project_name=project_name, source=source, request_options=request_options
+        )
+        return _response.data
 
     def update_span_comment(
         self,
@@ -780,6 +982,7 @@ class SpansClient:
         *,
         text: str,
         id: typing.Optional[str] = OMIT,
+        source_queue_id: typing.Optional[str] = OMIT,
         created_at: typing.Optional[dt.datetime] = OMIT,
         last_updated_at: typing.Optional[dt.datetime] = OMIT,
         created_by: typing.Optional[str] = OMIT,
@@ -796,6 +999,8 @@ class SpansClient:
         text : str
 
         id : typing.Optional[str]
+
+        source_queue_id : typing.Optional[str]
 
         created_at : typing.Optional[dt.datetime]
 
@@ -822,6 +1027,7 @@ class SpansClient:
             comment_id,
             text=text,
             id=id,
+            source_queue_id=source_queue_id,
             created_at=created_at,
             last_updated_at=last_updated_at,
             created_by=created_by,
@@ -852,6 +1058,7 @@ class AsyncSpansClient:
         *,
         text: str,
         id: typing.Optional[str] = OMIT,
+        source_queue_id: typing.Optional[str] = OMIT,
         created_at: typing.Optional[dt.datetime] = OMIT,
         last_updated_at: typing.Optional[dt.datetime] = OMIT,
         created_by: typing.Optional[str] = OMIT,
@@ -868,6 +1075,8 @@ class AsyncSpansClient:
         text : str
 
         id : typing.Optional[str]
+
+        source_queue_id : typing.Optional[str]
 
         created_at : typing.Optional[dt.datetime]
 
@@ -897,6 +1106,7 @@ class AsyncSpansClient:
             id_,
             text=text,
             id=id,
+            source_queue_id=source_queue_id,
             created_at=created_at,
             last_updated_at=last_updated_at,
             created_by=created_by,
@@ -914,10 +1124,12 @@ class AsyncSpansClient:
         source: FeedbackScoreSource,
         category_name: typing.Optional[str] = OMIT,
         reason: typing.Optional[str] = OMIT,
+        source_queue_id: typing.Optional[str] = OMIT,
         created_at: typing.Optional[dt.datetime] = OMIT,
         last_updated_at: typing.Optional[dt.datetime] = OMIT,
         created_by: typing.Optional[str] = OMIT,
         last_updated_by: typing.Optional[str] = OMIT,
+        value_by_author: typing.Optional[typing.Dict[str, ValueEntry]] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> None:
         """
@@ -937,6 +1149,8 @@ class AsyncSpansClient:
 
         reason : typing.Optional[str]
 
+        source_queue_id : typing.Optional[str]
+
         created_at : typing.Optional[dt.datetime]
 
         last_updated_at : typing.Optional[dt.datetime]
@@ -944,6 +1158,8 @@ class AsyncSpansClient:
         created_by : typing.Optional[str]
 
         last_updated_by : typing.Optional[str]
+
+        value_by_author : typing.Optional[typing.Dict[str, ValueEntry]]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -968,11 +1184,87 @@ class AsyncSpansClient:
             source=source,
             category_name=category_name,
             reason=reason,
+            source_queue_id=source_queue_id,
             created_at=created_at,
             last_updated_at=last_updated_at,
             created_by=created_by,
             last_updated_by=last_updated_by,
+            value_by_author=value_by_author,
             request_options=request_options,
+        )
+        return _response.data
+
+    async def create_spans(
+        self, *, spans: typing.Sequence[SpanWrite], request_options: typing.Optional[RequestOptions] = None
+    ) -> None:
+        """
+        Create spans
+
+        Parameters
+        ----------
+        spans : typing.Sequence[SpanWrite]
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        None
+
+        Examples
+        --------
+        from Opik import AsyncOpikApi
+        from Opik import SpanWrite
+        import datetime
+        import asyncio
+        client = AsyncOpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        async def main() -> None:
+            await client.spans.create_spans(spans=[SpanWrite(start_time=datetime.datetime.fromisoformat("2024-01-15 09:30:00+00:00", ), )], )
+        asyncio.run(main())
+        """
+        _response = await self._raw_client.create_spans(spans=spans, request_options=request_options)
+        return _response.data
+
+    async def batch_update_spans(
+        self,
+        *,
+        ids: typing.Sequence[str],
+        update: SpanUpdate,
+        merge_tags: typing.Optional[bool] = OMIT,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> None:
+        """
+        Update multiple spans
+
+        Parameters
+        ----------
+        ids : typing.Sequence[str]
+            List of span IDs to update (max 1000)
+
+        update : SpanUpdate
+
+        merge_tags : typing.Optional[bool]
+            If true, merge tags with existing tags instead of replacing them. Default: false
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        None
+
+        Examples
+        --------
+        from Opik import AsyncOpikApi
+        from Opik import SpanUpdate
+        import asyncio
+        client = AsyncOpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        async def main() -> None:
+            await client.spans.batch_update_spans(ids=['ids'], update=SpanUpdate(trace_id='trace_id', ), )
+        asyncio.run(main())
+        """
+        _response = await self._raw_client.batch_update_spans(
+            ids=ids, update=update, merge_tags=merge_tags, request_options=request_options
         )
         return _response.data
 
@@ -987,8 +1279,12 @@ class AsyncSpansClient:
         type: typing.Optional[GetSpansByProjectRequestType] = None,
         filters: typing.Optional[str] = None,
         truncate: typing.Optional[bool] = None,
+        strip_attachments: typing.Optional[bool] = None,
         sorting: typing.Optional[str] = None,
         exclude: typing.Optional[str] = None,
+        search: typing.Optional[str] = None,
+        from_time: typing.Optional[dt.datetime] = None,
+        to_time: typing.Optional[dt.datetime] = None,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> SpanPagePublic:
         """
@@ -1012,9 +1308,17 @@ class AsyncSpansClient:
 
         truncate : typing.Optional[bool]
 
+        strip_attachments : typing.Optional[bool]
+
         sorting : typing.Optional[str]
 
         exclude : typing.Optional[str]
+
+        search : typing.Optional[str]
+
+        from_time : typing.Optional[dt.datetime]
+
+        to_time : typing.Optional[dt.datetime]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -1042,8 +1346,12 @@ class AsyncSpansClient:
             type=type,
             filters=filters,
             truncate=truncate,
+            strip_attachments=strip_attachments,
             sorting=sorting,
             exclude=exclude,
+            search=search,
+            from_time=from_time,
+            to_time=to_time,
             request_options=request_options,
         )
         return _response.data
@@ -1061,7 +1369,7 @@ class AsyncSpansClient:
         end_time: typing.Optional[dt.datetime] = OMIT,
         input: typing.Optional[JsonListStringWrite] = OMIT,
         output: typing.Optional[JsonListStringWrite] = OMIT,
-        metadata: typing.Optional[JsonNodeWrite] = OMIT,
+        metadata: typing.Optional[JsonListStringWrite] = OMIT,
         model: typing.Optional[str] = OMIT,
         provider: typing.Optional[str] = OMIT,
         tags: typing.Optional[typing.Sequence[str]] = OMIT,
@@ -1070,6 +1378,9 @@ class AsyncSpansClient:
         last_updated_at: typing.Optional[dt.datetime] = OMIT,
         total_estimated_cost: typing.Optional[float] = OMIT,
         total_estimated_cost_version: typing.Optional[str] = OMIT,
+        ttft: typing.Optional[float] = OMIT,
+        source: typing.Optional[SpanWriteSource] = OMIT,
+        environment: typing.Optional[str] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> None:
         """
@@ -1098,7 +1409,7 @@ class AsyncSpansClient:
 
         output : typing.Optional[JsonListStringWrite]
 
-        metadata : typing.Optional[JsonNodeWrite]
+        metadata : typing.Optional[JsonListStringWrite]
 
         model : typing.Optional[str]
 
@@ -1115,6 +1426,13 @@ class AsyncSpansClient:
         total_estimated_cost : typing.Optional[float]
 
         total_estimated_cost_version : typing.Optional[str]
+
+        ttft : typing.Optional[float]
+            Time to first token in milliseconds
+
+        source : typing.Optional[SpanWriteSource]
+
+        environment : typing.Optional[str]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -1153,48 +1471,28 @@ class AsyncSpansClient:
             last_updated_at=last_updated_at,
             total_estimated_cost=total_estimated_cost,
             total_estimated_cost_version=total_estimated_cost_version,
+            ttft=ttft,
+            source=source,
+            environment=environment,
             request_options=request_options,
         )
         return _response.data
 
-    async def create_spans(
-        self, *, spans: typing.Sequence[SpanWrite], request_options: typing.Optional[RequestOptions] = None
-    ) -> None:
-        """
-        Create spans
-
-        Parameters
-        ----------
-        spans : typing.Sequence[SpanWrite]
-
-        request_options : typing.Optional[RequestOptions]
-            Request-specific configuration.
-
-        Returns
-        -------
-        None
-
-        Examples
-        --------
-        from Opik import AsyncOpikApi
-        from Opik import SpanWrite
-        import datetime
-        import asyncio
-        client = AsyncOpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
-        async def main() -> None:
-            await client.spans.create_spans(spans=[SpanWrite(start_time=datetime.datetime.fromisoformat("2024-01-15 09:30:00+00:00", ), )], )
-        asyncio.run(main())
-        """
-        _response = await self._raw_client.create_spans(spans=spans, request_options=request_options)
-        return _response.data
-
-    async def get_span_by_id(self, id: str, *, request_options: typing.Optional[RequestOptions] = None) -> SpanPublic:
+    async def get_span_by_id(
+        self,
+        id: str,
+        *,
+        strip_attachments: typing.Optional[bool] = None,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> SpanPublic:
         """
         Get span by id
 
         Parameters
         ----------
         id : str
+
+        strip_attachments : typing.Optional[bool]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -1213,7 +1511,9 @@ class AsyncSpansClient:
             await client.spans.get_span_by_id(id='id', )
         asyncio.run(main())
         """
-        _response = await self._raw_client.get_span_by_id(id, request_options=request_options)
+        _response = await self._raw_client.get_span_by_id(
+            id, strip_attachments=strip_attachments, request_options=request_options
+        )
         return _response.data
 
     async def delete_span_by_id(self, id: str, *, request_options: typing.Optional[RequestOptions] = None) -> None:
@@ -1256,13 +1556,18 @@ class AsyncSpansClient:
         end_time: typing.Optional[dt.datetime] = OMIT,
         input: typing.Optional[JsonListString] = OMIT,
         output: typing.Optional[JsonListString] = OMIT,
-        metadata: typing.Optional[JsonNode] = OMIT,
+        metadata: typing.Optional[JsonListString] = OMIT,
         model: typing.Optional[str] = OMIT,
         provider: typing.Optional[str] = OMIT,
         tags: typing.Optional[typing.Sequence[str]] = OMIT,
+        tags_to_add: typing.Optional[typing.Sequence[str]] = OMIT,
+        tags_to_remove: typing.Optional[typing.Sequence[str]] = OMIT,
         usage: typing.Optional[typing.Dict[str, int]] = OMIT,
         total_estimated_cost: typing.Optional[float] = OMIT,
         error_info: typing.Optional[ErrorInfo] = OMIT,
+        ttft: typing.Optional[float] = OMIT,
+        source: typing.Optional[SpanUpdateSource] = OMIT,
+        environment: typing.Optional[str] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> None:
         """
@@ -1292,19 +1597,32 @@ class AsyncSpansClient:
 
         output : typing.Optional[JsonListString]
 
-        metadata : typing.Optional[JsonNode]
+        metadata : typing.Optional[JsonListString]
 
         model : typing.Optional[str]
 
         provider : typing.Optional[str]
 
         tags : typing.Optional[typing.Sequence[str]]
+            Tags
+
+        tags_to_add : typing.Optional[typing.Sequence[str]]
+            Tags to add
+
+        tags_to_remove : typing.Optional[typing.Sequence[str]]
+            Tags to remove
 
         usage : typing.Optional[typing.Dict[str, int]]
 
         total_estimated_cost : typing.Optional[float]
 
         error_info : typing.Optional[ErrorInfo]
+
+        ttft : typing.Optional[float]
+
+        source : typing.Optional[SpanUpdateSource]
+
+        environment : typing.Optional[str]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -1337,9 +1655,14 @@ class AsyncSpansClient:
             model=model,
             provider=provider,
             tags=tags,
+            tags_to_add=tags_to_add,
+            tags_to_remove=tags_to_remove,
             usage=usage,
             total_estimated_cost=total_estimated_cost,
             error_info=error_info,
+            ttft=ttft,
+            source=source,
+            environment=environment,
             request_options=request_options,
         )
         return _response.data
@@ -1374,7 +1697,13 @@ class AsyncSpansClient:
         return _response.data
 
     async def delete_span_feedback_score(
-        self, id: str, *, name: str, request_options: typing.Optional[RequestOptions] = None
+        self,
+        id: str,
+        *,
+        name: str,
+        author: typing.Optional[str] = OMIT,
+        source_queue_id: typing.Optional[str] = OMIT,
+        request_options: typing.Optional[RequestOptions] = None,
     ) -> None:
         """
         Delete span feedback score
@@ -1384,6 +1713,10 @@ class AsyncSpansClient:
         id : str
 
         name : str
+
+        author : typing.Optional[str]
+
+        source_queue_id : typing.Optional[str]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -1401,16 +1734,18 @@ class AsyncSpansClient:
             await client.spans.delete_span_feedback_score(id='id', name='name', )
         asyncio.run(main())
         """
-        _response = await self._raw_client.delete_span_feedback_score(id, name=name, request_options=request_options)
+        _response = await self._raw_client.delete_span_feedback_score(
+            id, name=name, author=author, source_queue_id=source_queue_id, request_options=request_options
+        )
         return _response.data
 
-    async def find_feedback_score_names_1(
+    async def find_feedback_score_names1(
         self,
         *,
         project_id: typing.Optional[str] = None,
         type: typing.Optional[FindFeedbackScoreNames1RequestType] = None,
         request_options: typing.Optional[RequestOptions] = None,
-    ) -> typing.List[str]:
+    ) -> FeedbackScoreNamesPublic:
         """
         Find Feedback Score names
 
@@ -1425,7 +1760,7 @@ class AsyncSpansClient:
 
         Returns
         -------
-        typing.List[str]
+        FeedbackScoreNamesPublic
             Feedback Scores resource
 
         Examples
@@ -1434,25 +1769,25 @@ class AsyncSpansClient:
         import asyncio
         client = AsyncOpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
         async def main() -> None:
-            await client.spans.find_feedback_score_names_1()
+            await client.spans.find_feedback_score_names1()
         asyncio.run(main())
         """
-        _response = await self._raw_client.find_feedback_score_names_1(
+        _response = await self._raw_client.find_feedback_score_names1(
             project_id=project_id, type=type, request_options=request_options
         )
         return _response.data
 
     async def get_span_comment(
-        self, comment_id: str, span_id: str, *, request_options: typing.Optional[RequestOptions] = None
+        self, span_id: str, comment_id: str, *, request_options: typing.Optional[RequestOptions] = None
     ) -> Comment:
         """
         Get span comment
 
         Parameters
         ----------
-        comment_id : str
-
         span_id : str
+
+        comment_id : str
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -1468,10 +1803,10 @@ class AsyncSpansClient:
         import asyncio
         client = AsyncOpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
         async def main() -> None:
-            await client.spans.get_span_comment(comment_id='commentId', span_id='spanId', )
+            await client.spans.get_span_comment(span_id='spanId', comment_id='commentId', )
         asyncio.run(main())
         """
-        _response = await self._raw_client.get_span_comment(comment_id, span_id, request_options=request_options)
+        _response = await self._raw_client.get_span_comment(span_id, comment_id, request_options=request_options)
         return _response.data
 
     async def get_span_stats(
@@ -1482,6 +1817,9 @@ class AsyncSpansClient:
         trace_id: typing.Optional[str] = None,
         type: typing.Optional[GetSpanStatsRequestType] = None,
         filters: typing.Optional[str] = None,
+        search: typing.Optional[str] = None,
+        from_time: typing.Optional[dt.datetime] = None,
+        to_time: typing.Optional[dt.datetime] = None,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> ProjectStatsPublic:
         """
@@ -1498,6 +1836,12 @@ class AsyncSpansClient:
         type : typing.Optional[GetSpanStatsRequestType]
 
         filters : typing.Optional[str]
+
+        search : typing.Optional[str]
+
+        from_time : typing.Optional[dt.datetime]
+
+        to_time : typing.Optional[dt.datetime]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -1522,6 +1866,9 @@ class AsyncSpansClient:
             trace_id=trace_id,
             type=type,
             filters=filters,
+            search=search,
+            from_time=from_time,
+            to_time=to_time,
             request_options=request_options,
         )
         return _response.data
@@ -1553,7 +1900,7 @@ class AsyncSpansClient:
         import asyncio
         client = AsyncOpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
         async def main() -> None:
-            await client.spans.score_batch_of_spans(scores=[FeedbackScoreBatchItem(id='id', name='name', value=1.1, source="ui", )], )
+            await client.spans.score_batch_of_spans(scores=[FeedbackScoreBatchItem(name='name', value=1.1, source="ui", id='id', )], )
         asyncio.run(main())
         """
         _response = await self._raw_client.score_batch_of_spans(scores=scores, request_options=request_options)
@@ -1570,6 +1917,9 @@ class AsyncSpansClient:
         limit: typing.Optional[int] = OMIT,
         last_retrieved_id: typing.Optional[str] = OMIT,
         truncate: typing.Optional[bool] = OMIT,
+        exclude: typing.Optional[typing.Sequence[SpanSearchStreamRequestPublicExcludeItem]] = OMIT,
+        from_time: typing.Optional[dt.datetime] = OMIT,
+        to_time: typing.Optional[dt.datetime] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> typing.AsyncIterator[bytes]:
         """
@@ -1595,6 +1945,15 @@ class AsyncSpansClient:
         truncate : typing.Optional[bool]
             Truncate image included in either input, output or metadata
 
+        exclude : typing.Optional[typing.Sequence[SpanSearchStreamRequestPublicExcludeItem]]
+            Fields to exclude from the response
+
+        from_time : typing.Optional[dt.datetime]
+            Filter spans created from this time (ISO-8601 format).
+
+        to_time : typing.Optional[dt.datetime]
+            Filter spans created up to this time (ISO-8601 format). If not provided, defaults to current time. Must be after 'from_time'.
+
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration. You can pass in configuration such as `chunk_size`, and more to customize the request and response.
 
@@ -1602,6 +1961,15 @@ class AsyncSpansClient:
         -------
         typing.AsyncIterator[bytes]
             Spans stream or error during process
+
+        Examples
+        --------
+        from Opik import AsyncOpikApi
+        import asyncio
+        client = AsyncOpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        async def main() -> None:
+            await client.spans.search_spans()
+        asyncio.run(main())
         """
         async with self._raw_client.search_spans(
             trace_id=trace_id,
@@ -1612,10 +1980,54 @@ class AsyncSpansClient:
             limit=limit,
             last_retrieved_id=last_retrieved_id,
             truncate=truncate,
+            exclude=exclude,
+            from_time=from_time,
+            to_time=to_time,
             request_options=request_options,
         ) as r:
             async for data in r.data:
                 yield data
+
+    async def exist(
+        self,
+        *,
+        project_id: typing.Optional[str] = None,
+        project_name: typing.Optional[str] = None,
+        source: typing.Optional[str] = None,
+        request_options: typing.Optional[RequestOptions] = None,
+    ) -> ExistenceResponse:
+        """
+        Returns whether the project has at least one span matching the given scope. Cheap existence probe (LIMIT 1) used to drive empty-state decisions without scanning or aggregating the whole project.
+
+        Parameters
+        ----------
+        project_id : typing.Optional[str]
+
+        project_name : typing.Optional[str]
+
+        source : typing.Optional[str]
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        ExistenceResponse
+            Span existence
+
+        Examples
+        --------
+        from Opik import AsyncOpikApi
+        import asyncio
+        client = AsyncOpikApi(api_key="YOUR_API_KEY", workspace_name="YOUR_WORKSPACE_NAME", )
+        async def main() -> None:
+            await client.spans.exist()
+        asyncio.run(main())
+        """
+        _response = await self._raw_client.exist(
+            project_id=project_id, project_name=project_name, source=source, request_options=request_options
+        )
+        return _response.data
 
     async def update_span_comment(
         self,
@@ -1623,6 +2035,7 @@ class AsyncSpansClient:
         *,
         text: str,
         id: typing.Optional[str] = OMIT,
+        source_queue_id: typing.Optional[str] = OMIT,
         created_at: typing.Optional[dt.datetime] = OMIT,
         last_updated_at: typing.Optional[dt.datetime] = OMIT,
         created_by: typing.Optional[str] = OMIT,
@@ -1639,6 +2052,8 @@ class AsyncSpansClient:
         text : str
 
         id : typing.Optional[str]
+
+        source_queue_id : typing.Optional[str]
 
         created_at : typing.Optional[dt.datetime]
 
@@ -1668,6 +2083,7 @@ class AsyncSpansClient:
             comment_id,
             text=text,
             id=id,
+            source_queue_id=source_queue_id,
             created_at=created_at,
             last_updated_at=last_updated_at,
             created_by=created_by,

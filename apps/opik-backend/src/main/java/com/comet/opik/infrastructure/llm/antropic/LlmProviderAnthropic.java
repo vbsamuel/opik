@@ -2,6 +2,8 @@ package com.comet.opik.infrastructure.llm.antropic;
 
 import com.comet.opik.api.ChunkedResponseHandler;
 import com.comet.opik.domain.llm.LlmProviderService;
+import com.comet.opik.infrastructure.llm.LoggingChunkedResponseHandler;
+import com.comet.opik.infrastructure.llm.StreamingResponseLogger;
 import dev.langchain4j.exception.AuthenticationException;
 import dev.langchain4j.exception.InternalServerException;
 import dev.langchain4j.exception.InvalidRequestException;
@@ -22,7 +24,6 @@ import java.util.Optional;
 import java.util.function.Consumer;
 
 import static com.comet.opik.domain.llm.ChatCompletionService.ERROR_EMPTY_MESSAGES;
-import static com.comet.opik.domain.llm.ChatCompletionService.ERROR_NO_COMPLETION_TOKENS;
 
 @RequiredArgsConstructor
 @Slf4j
@@ -46,8 +47,18 @@ class LlmProviderAnthropic implements LlmProviderService {
             @NonNull Runnable handleClose,
             @NonNull Consumer<Throwable> handleError) {
         validateRequest(request);
+
+        // Create a simple summary of the request for logging
+        String requestSummary = String.format("model=%s, messages=%d",
+                request.model(),
+                request.messages() != null ? request.messages().size() : 0);
+
+        // Create dependencies following IoC principle
+        var delegate = new ChunkedResponseHandler(handleMessage, handleClose, handleError, request.model());
+        var logger = new StreamingResponseLogger(requestSummary, request.model());
+
         anthropicClient.createMessage(LlmProviderAnthropicMapper.INSTANCE.toCreateMessageRequest(request),
-                new ChunkedResponseHandler(handleMessage, handleClose, handleError, request.model()));
+                new LoggingChunkedResponseHandler(delegate, logger));
     }
 
     @Override
@@ -56,9 +67,9 @@ class LlmProviderAnthropic implements LlmProviderService {
         if (CollectionUtils.isEmpty(request.messages())) {
             throw new BadRequestException(ERROR_EMPTY_MESSAGES);
         }
-        if (request.maxCompletionTokens() == null) {
-            throw new BadRequestException(ERROR_NO_COMPLETION_TOKENS);
-        }
+        // maxCompletionTokens is required by Anthropic but defaulted (with a log line) inside
+        // LlmProviderAnthropicMapper.resolveMaxTokens, so callers without an explicit cap still
+        // succeed — same UX as OpenAI in the same flows.
     }
 
     @Override

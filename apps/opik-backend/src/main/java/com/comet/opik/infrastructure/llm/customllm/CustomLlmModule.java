@@ -15,15 +15,16 @@ public class CustomLlmModule extends AbstractModule {
     @Singleton
     @Named("customLlmGenerator")
     public CustomLlmClientGenerator clientGenerator(
-            @NonNull @Config("llmProviderClient") LlmProviderClientConfig config) {
-        return new CustomLlmClientGenerator(config);
+            @NonNull @Config("llmProviderClient") LlmProviderClientConfig config,
+            @NonNull AuthTokenProvider authTokenProvider) {
+        return new CustomLlmClientGenerator(config, authTokenProvider);
     }
 
     @Provides
     @Singleton
-    @Named("customLlm")
+    @Named("openAICompatible")
     public LlmServiceProvider llmServiceProvider(@NonNull LlmProviderFactory llmProviderFactory,
             @NonNull @Named("customLlmGenerator") CustomLlmClientGenerator clientGenerator) {
-        return new CustomLlmServiceProvider(clientGenerator, llmProviderFactory);
+        return new OpenAICompatibleServiceProvider(clientGenerator, llmProviderFactory);
     }
 }

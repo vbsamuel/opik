@@ -3,14 +3,19 @@ import isBoolean from "lodash/isBoolean";
 import api, {
   OPTIMIZATIONS_KEY,
   OPTIMIZATIONS_REST_ENDPOINT,
+  PROJECTS_REST_ENDPOINT,
   QueryConfig,
 } from "@/api/api";
 import { Optimization } from "@/types/optimizations";
+import { Filters } from "@/types/filters";
+import { processFilters } from "@/lib/filters";
 
 export type UseOptimizationsListParams = {
   workspaceName: string;
+  projectId?: string;
   datasetId?: string;
   datasetDeleted?: boolean;
+  filters?: Filters;
   search?: string;
   page: number;
   size: number;
@@ -26,19 +31,26 @@ export const getOptimizationsList = async (
   { signal }: QueryFunctionContext,
   {
     workspaceName,
+    projectId,
     datasetId,
     datasetDeleted,
+    filters,
     search,
     size,
     page,
   }: UseOptimizationsListParams,
 ) => {
-  const { data } = await api.get(OPTIMIZATIONS_REST_ENDPOINT, {
+  const endpoint = projectId
+    ? `${PROJECTS_REST_ENDPOINT}${projectId}/optimizations`
+    : OPTIMIZATIONS_REST_ENDPOINT;
+
+  const { data } = await api.get(endpoint, {
     signal,
     params: {
-      workspace_name: workspaceName, // we just need it to reset the cash in case workspace is changed
+      workspace_name: workspaceName,
       ...(isBoolean(datasetDeleted) && { dataset_deleted: datasetDeleted }),
-      ...(search && { name: search }),
+      ...processFilters(filters),
+      ...(search && { dataset_name: search }),
       ...(datasetId && { dataset_id: datasetId }),
       size,
       page,

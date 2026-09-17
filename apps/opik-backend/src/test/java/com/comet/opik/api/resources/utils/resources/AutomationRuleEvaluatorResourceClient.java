@@ -13,6 +13,8 @@ import lombok.RequiredArgsConstructor;
 import org.apache.http.HttpStatus;
 import ru.vyarus.dropwizard.guice.test.ClientSupport;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 
 import static com.comet.opik.api.LogItem.LogPage;
@@ -28,7 +30,7 @@ public class AutomationRuleEvaluatorResourceClient {
     private final ClientSupport client;
     private final String baseURI;
 
-    public UUID createEvaluator(AutomationRuleEvaluator<?> evaluator, String workspaceName, String apiKey) {
+    public UUID createEvaluator(AutomationRuleEvaluator<?, ?> evaluator, String workspaceName, String apiKey) {
         try (var actualResponse = createEvaluator(evaluator, workspaceName, apiKey, HttpStatus.SC_CREATED)) {
             assertThat(actualResponse.hasEntity()).isFalse();
             return TestUtils.getIdFromLocation(actualResponse.getLocation());
@@ -36,7 +38,7 @@ public class AutomationRuleEvaluatorResourceClient {
     }
 
     public Response createEvaluator(
-            AutomationRuleEvaluator<?> evaluator, String workspaceName, String apiKey, int expectedStatus) {
+            AutomationRuleEvaluator<?, ?> evaluator, String workspaceName, String apiKey, int expectedStatus) {
         var actualResponse = client.target(RESOURCE_PATH.formatted(baseURI))
                 .request()
                 .accept(MediaType.APPLICATION_JSON_TYPE)
@@ -47,6 +49,26 @@ public class AutomationRuleEvaluatorResourceClient {
         assertThat(actualResponse.getStatusInfo().getStatusCode()).isEqualTo(expectedStatus);
 
         return actualResponse;
+    }
+
+    public Response callCreateEvaluator(AutomationRuleEvaluator<?, ?> evaluator, String workspaceName, String apiKey) {
+        return client.target(RESOURCE_PATH.formatted(baseURI))
+                .request()
+                .accept(MediaType.APPLICATION_JSON_TYPE)
+                .header(HttpHeaders.AUTHORIZATION, apiKey)
+                .header(WORKSPACE_HEADER, workspaceName)
+                .post(Entity.json(evaluator));
+    }
+
+    public Response callUpdateEvaluator(UUID evaluatorId, String workspaceName,
+            AutomationRuleEvaluatorUpdate<?, ?> updatedEvaluator, String apiKey) {
+        return client.target(RESOURCE_PATH.formatted(baseURI))
+                .path(evaluatorId.toString())
+                .request()
+                .header(HttpHeaders.AUTHORIZATION, apiKey)
+                .accept(MediaType.APPLICATION_JSON_TYPE)
+                .header(WORKSPACE_HEADER, workspaceName)
+                .method(HttpMethod.PATCH, Entity.json(updatedEvaluator));
     }
 
     public Response getEvaluator(UUID id, UUID projectId, String workspaceName, String apiKey, int expectedStatus) {
@@ -88,10 +110,51 @@ public class AutomationRuleEvaluatorResourceClient {
         return actualResponse;
     }
 
+    public AutomationRuleEvaluator.AutomationRuleEvaluatorPage findEvaluatorPage(
+            UUID projectId,
+            String name,
+            String filters,
+            String sorting,
+            Integer page,
+            Integer size,
+            String workspaceName,
+            String apiKey) {
+        var target = client.target(RESOURCE_PATH.formatted(baseURI));
+        if (projectId != null) {
+            target = target.queryParam("project_id", projectId);
+        }
+        if (name != null) {
+            target = target.queryParam("name", name);
+        }
+        if (filters != null) {
+            target = target.queryParam("filters", URLEncoder.encode(filters, StandardCharsets.UTF_8));
+        }
+        if (sorting != null) {
+            target = target.queryParam("sorting", URLEncoder.encode(sorting, StandardCharsets.UTF_8));
+        }
+        if (page != null) {
+            target = target.queryParam("page", page);
+        }
+        if (size != null) {
+            target = target.queryParam("size", size);
+        }
+
+        var actualResponse = target
+                .request()
+                .header(WORKSPACE_HEADER, workspaceName)
+                .header(HttpHeaders.AUTHORIZATION, apiKey)
+                .accept(MediaType.APPLICATION_JSON_TYPE)
+                .get();
+
+        assertThat(actualResponse.getStatusInfo().getStatusCode()).isEqualTo(HttpStatus.SC_OK);
+
+        return actualResponse.readEntity(AutomationRuleEvaluator.AutomationRuleEvaluatorPage.class);
+    }
+
     public Response updateEvaluator(
             UUID evaluatorId,
             String workspaceName,
-            AutomationRuleEvaluatorUpdate<?> updatedEvaluator,
+            AutomationRuleEvaluatorUpdate<?, ?> updatedEvaluator,
             String apiKey,
             int expectedStatus) {
         var actualResponse = client.target(RESOURCE_PATH.formatted(baseURI))
@@ -144,7 +207,7 @@ public class AutomationRuleEvaluatorResourceClient {
     // Session token authentication methods
 
     public Response createEvaluatorWithSessionToken(
-            AutomationRuleEvaluator<?> evaluator, String sessionToken, String workspaceName) {
+            AutomationRuleEvaluator<?, ?> evaluator, String sessionToken, String workspaceName) {
         return client.target(RESOURCE_PATH.formatted(baseURI))
                 .request()
                 .cookie(SESSION_COOKIE, sessionToken)
@@ -186,7 +249,7 @@ public class AutomationRuleEvaluatorResourceClient {
     }
 
     public Response updateEvaluatorWithSessionToken(
-            UUID evaluatorId, AutomationRuleEvaluatorUpdate<?> updatedEvaluator,
+            UUID evaluatorId, AutomationRuleEvaluatorUpdate<?, ?> updatedEvaluator,
             String sessionToken, String workspaceName) {
         return client.target(RESOURCE_PATH.formatted(baseURI))
                 .path(evaluatorId.toString())

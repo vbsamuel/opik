@@ -6,6 +6,7 @@ metadata:
   labels:
     {{- include "opik.labels" $  | nindent 4 }}
 spec:
+  suspend: {{ .Values.clickhouse.backup.suspend | default false }}
   schedule: "{{ .Values.clickhouse.backup.schedule }}"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: {{ .Values.clickhouse.backup.successfulJobsHistoryLimit }}
@@ -64,12 +65,19 @@ spec:
             - name: SECRET_KEY
               value: ""
             {{- end }}
-
-          {{- with .Values.clickhouse.nodeSelector }}
+            {{- range $key, $value := .Values.clickhouse.backup.extraEnv }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+          {{- with ( default .Values.clickhouse.nodeSelector .Values.clickhouse.backup.nodeSelector ) }}
           nodeSelector:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          {{- with .Values.clickhouse.tolerations }}
+          {{- with ( default .Values.clickhouse.affinity .Values.clickhouse.backup.affinity ) }}
+          affinity:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with ( default .Values.clickhouse.tolerations .Values.clickhouse.backup.tolerations ) }}
           tolerations:
             {{- toYaml . | nindent 12 }}
           {{- end }}

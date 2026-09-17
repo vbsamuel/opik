@@ -9,18 +9,18 @@ import com.comet.opik.api.ProjectUpdate;
 import com.comet.opik.api.Visibility;
 import com.comet.opik.api.error.EntityAlreadyExistsException;
 import com.comet.opik.api.error.ErrorMessage;
-import com.comet.opik.api.sorting.Direction;
 import com.comet.opik.api.sorting.SortableFields;
 import com.comet.opik.api.sorting.SortingFactoryProjects;
 import com.comet.opik.api.sorting.SortingField;
 import com.comet.opik.domain.sorting.SortingQueryBuilder;
 import com.comet.opik.domain.stats.StatsMapper;
 import com.comet.opik.infrastructure.auth.RequestContext;
-import com.comet.opik.infrastructure.db.TransactionTemplateAsync;
+import com.comet.opik.infrastructure.bi.AnalyticsService;
 import com.comet.opik.utils.BinaryOperatorUtils;
 import com.comet.opik.utils.ErrorUtils;
-import com.comet.opik.utils.PaginationUtils;
+import com.google.common.collect.Lists;
 import com.google.inject.ImplementedBy;
+import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Provider;
 import jakarta.inject.Singleton;
@@ -30,17 +30,15 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.jdbi.v3.core.statement.UnableToExecuteStatementException;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
-import reactor.util.context.Context;
 import ru.vyarus.guicey.jdbi3.tx.TransactionTemplate;
 
 import java.sql.SQLIntegrityConstraintViolationException;
 import java.time.Instant;
 import java.util.Collection;
-import java.util.Comparator;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -50,16 +48,12 @@ import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-import static com.comet.opik.api.Project.Configuration;
 import static com.comet.opik.api.ProjectStats.ProjectStatItem;
 import static com.comet.opik.api.ProjectStatsSummary.ProjectStatsSummaryItem;
 import static com.comet.opik.infrastructure.db.TransactionTemplateAsync.READ_ONLY;
 import static com.comet.opik.infrastructure.db.TransactionTemplateAsync.WRITE;
 import static com.comet.opik.utils.AsyncUtils.makeMonoContextAware;
-import static java.util.Collections.reverseOrder;
 import static java.util.stream.Collectors.toMap;
-import static java.util.stream.Collectors.toSet;
-import static java.util.stream.Collectors.toUnmodifiableSet;
 
 @ImplementedBy(ProjectServiceImpl.class)
 public interface ProjectService {
@@ -85,22 +79,40 @@ public interface ProjectService {
 
     List<Project> findByIds(String workspaceId, Set<UUID> ids);
 
+    Mono<Set<UUID>> findProjectIdsByWorkspace();
+
     List<Project> findByNames(String workspaceId, List<String> names);
+
+    Optional<UUID> findProjectIdByName(String workspaceId, String projectName);
+
+    Mono<Optional<UUID>> resolveProjectId(String projectName);
+
+    Map<UUID, String> findIdToNameByIds(String workspaceId, Set<UUID> ids);
+
+    Mono<Set<UUID>> getDemoProjectIdsInWorkspaces(Set<String> workspaceIds);
 
     Mono<Project> getOrCreate(String projectName);
 
-    Project retrieveByName(String projectName);
+    Project getOrCreate(String workspaceId, String projectName, String userName);
+
+    Project retrieveByName(String projectName, boolean includeStats);
 
     Mono<List<Project>> retrieveByNamesOrCreate(Set<String> projectNames);
 
     void recordLastUpdatedTrace(String workspaceId, Collection<ProjectIdLastUpdated> lastUpdatedTraces);
 
+    Mono<Optional<UUID>> resolveProjectIdOrCreate(@Nullable UUID projectId, @Nullable String projectName);
+
     Mono<UUID> resolveProjectIdAndVerifyVisibility(UUID projectId, String projectName);
+
+    UUID validateProjectIdentifier(UUID projectId, String projectName, String workspaceId);
 
     ProjectStatsSummary getStats(int page, int size, @NonNull ProjectCriteria criteria,
             @NonNull List<SortingField> sortingFields);
 
-    void updateConfiguration(UUID projectId, Configuration configuration);
+    Mono<Project> getOrFail(@NonNull UUID id);
+
+    void validateProjectIdExists(UUID projectId, String workspaceId);
 
     static Map<String, Project> groupByName(List<Project> projects) {
         return projects.stream().collect(Collectors.toMap(
@@ -120,14 +132,23 @@ class ProjectServiceImpl implements ProjectService {
     }
 
     private static final String PROJECT_ALREADY_EXISTS = "Project already exists";
+
+    // recordLastUpdatedTrace populates projects.last_updated_trace_at from the trace timestamp, so sorting by last
+    // trace reads it straight from MySQL instead of querying ClickHouse. Projects without traces have it NULL, so we
+    // fall back to last_updated_at, matching the previous behavior while keeping this a single DB query.
+    private static final String LAST_UPDATED_TRACE_AT_SORT = "COALESCE(last_updated_trace_at, last_updated_at)";
+    private static final Map<String, String> SORTING_FIELD_MAPPING = Map.of(
+            SortableFields.LAST_UPDATED_TRACE_AT, LAST_UPDATED_TRACE_AT_SORT);
+
+    private static final int DEMO_PROJECT_WORKSPACE_CHUNK_SIZE = 1_000;
+
     private final @NonNull TransactionTemplate template;
     private final @NonNull IdGenerator idGenerator;
     private final @NonNull Provider<RequestContext> requestContext;
     private final @NonNull TraceDAO traceDAO;
-    private final @NonNull TransactionTemplateAsync transactionTemplateAsync;
     private final @NonNull SortingFactoryProjects sortingFactory;
     private final @NonNull SortingQueryBuilder sortingQueryBuilder;
-    private final @NonNull ProjectConfigDAO projectConfigDAO;
+    private final @NonNull AnalyticsService analyticsService;
 
     private NotFoundException createNotFoundError() {
         String message = "Project not found";
@@ -141,19 +162,8 @@ class ProjectServiceImpl implements ProjectService {
         UUID projectId = idGenerator.generateId();
         String userName = requestContext.get().getUserName();
         String workspaceId = requestContext.get().getWorkspaceId();
-        Configuration configuration = project.configuration();
 
-        project = createProject(project, projectId, userName, workspaceId).toBuilder()
-                .configuration(configuration)
-                .build();
-
-        if (project.configuration() != null) {
-            projectConfigDAO.upsertConfigurations(project)
-                    .contextWrite(ctx -> setContext(ctx, workspaceId, userName))
-                    .block();
-        }
-
-        return project;
+        return createProject(project, projectId, userName, workspaceId);
     }
 
     private Project createProject(Project project, UUID projectId, String userName, String workspaceId) {
@@ -174,6 +184,13 @@ class ProjectServiceImpl implements ProjectService {
 
                 return newProject;
             });
+
+            analyticsService.trackEvent("project_created", Map.of(
+                    "project_id", newProject.id().toString(),
+                    "project_name", newProject.name(),
+                    "workspace_id", workspaceId,
+                    "user_name", userName,
+                    "date", Instant.now().toString()));
 
             return get(newProject.id(), workspaceId);
         } catch (UnableToExecuteStatementException e) {
@@ -228,32 +245,38 @@ class ProjectServiceImpl implements ProjectService {
         String workspaceId = requestContext.get().getWorkspaceId();
 
         return Optional.of(get(id, workspaceId))
-                .flatMap(this::verifyVisibility)
+                .flatMap(project -> verifyVisibility(project, requestContext.get().getVisibility()))
                 .orElseThrow(() -> ErrorUtils.failWithNotFound("Project", id));
     }
 
     @Override
+    public Mono<Project> getOrFail(@NonNull UUID id) {
+        return Mono.deferContextual(contextView -> {
+            String workspaceId = contextView.get(RequestContext.WORKSPACE_ID);
+            Visibility visibility = contextView.get(RequestContext.VISIBILITY);
+
+            return Mono.fromCallable(() -> Optional.of(get(id, workspaceId))
+                    .flatMap(project -> verifyVisibility(project, visibility))
+                    .orElseThrow(() -> ErrorUtils.failWithNotFound("Project", id)))
+                    .subscribeOn(Schedulers.boundedElastic());
+        });
+    }
+
+    @Override
+    public void validateProjectIdExists(UUID projectId, String workspaceId) {
+        if (projectId != null && findByIds(workspaceId, Set.of(projectId)).isEmpty()) {
+            throw ErrorUtils.failWithNotFound("Project", projectId);
+        }
+    }
+
+    @Override
     public Project get(@NonNull UUID id, @NonNull String workspaceId) {
-        Project project = template.inTransaction(READ_ONLY, handle -> {
+        return template.inTransaction(READ_ONLY, handle -> {
 
             var repository = handle.attach(ProjectDAO.class);
 
             return repository.fetch(id, workspaceId).orElseThrow(this::createNotFoundError);
         });
-
-        //TODO: make it async
-        Map<UUID, Instant> lastUpdatedTraceAt = transactionTemplateAsync
-                .nonTransaction(connection -> traceDAO.getLastUpdatedTraceAt(Set.of(id), workspaceId, connection))
-                .block();
-
-        Configuration configuration = projectConfigDAO.getConfigurations(id)
-                .contextWrite(ctx -> setContext(ctx, workspaceId, "unused")) // userName is not used in this context
-                .block();
-
-        return project.toBuilder()
-                .lastUpdatedTraceAt(lastUpdatedTraceAt.get(project.id()))
-                .configuration(configuration)
-                .build();
     }
 
     @Override
@@ -268,7 +291,7 @@ class ProjectServiceImpl implements ProjectService {
                 .map(Project::id)
                 .toList();
 
-        Map<UUID, Map<String, Object>> projectStats = getProjectStats(projectIds, workspaceId);
+        Map<UUID, Map<String, Object>> projectStats = getProjectStats(projectIds, workspaceId, criteria);
 
         return ProjectStatsSummary.builder()
                 .content(
@@ -276,20 +299,6 @@ class ProjectServiceImpl implements ProjectService {
                                 .map(projectId -> getStats(projectId, projectStats.get(projectId)))
                                 .toList())
                 .build();
-    }
-
-    @Override
-    public void updateConfiguration(@NonNull UUID projectId, @NonNull Configuration configuration) {
-        String workspaceId = requestContext.get().getWorkspaceId();
-        String userName = requestContext.get().getUserName();
-
-        Project project = get(projectId).toBuilder()
-                .configuration(configuration)
-                .build();
-
-        projectConfigDAO.upsertConfigurations(project)
-                .contextWrite(ctx -> setContext(ctx, workspaceId, userName))
-                .block();
     }
 
     private ProjectStatsSummaryItem getStats(UUID projectId, Map<String, Object> projectStats) {
@@ -301,6 +310,7 @@ class ProjectServiceImpl implements ProjectService {
                 .totalEstimatedCostSum(StatsMapper.getStatsTotalEstimatedCostSum(projectStats))
                 .usage(StatsMapper.getStatsUsage(projectStats))
                 .traceCount(StatsMapper.getStatsTraceCount(projectStats))
+                .threadCount(StatsMapper.getStatsThreadCount(projectStats))
                 .guardrailsFailedCount(StatsMapper.getStatsGuardrailsFailedCount(projectStats))
                 .errorCount(StatsMapper.getStatsErrorCount(projectStats))
                 .build();
@@ -326,11 +336,6 @@ class ProjectServiceImpl implements ProjectService {
             // Void return
             return null;
         });
-
-        projectConfigDAO.deleteConfigurationsByProjectId(List.of(id))
-                .contextWrite(ctx -> ctx.put(RequestContext.USER_NAME, userName)
-                        .put(RequestContext.WORKSPACE_ID, workspaceId))
-                .block();
     }
 
     @Override
@@ -347,14 +352,6 @@ class ProjectServiceImpl implements ProjectService {
             handle.attach(ProjectDAO.class).delete(ids, workspaceId);
             return null;
         });
-
-        projectConfigDAO.deleteConfigurationsByProjectId(List.copyOf(ids))
-                .contextWrite(ctx -> setContext(ctx, workspaceId, userName))
-                .block();
-    }
-
-    private static Context setContext(Context ctx, String workspaceId, String userName) {
-        return ctx.put(RequestContext.WORKSPACE_ID, workspaceId).put(RequestContext.USER_NAME, userName);
     }
 
     @Override
@@ -363,11 +360,6 @@ class ProjectServiceImpl implements ProjectService {
 
         String workspaceId = requestContext.get().getWorkspaceId();
         Visibility visibility = requestContext.get().getVisibility();
-        String userName = requestContext.get().getUserName();
-
-        if (!sortingFields.isEmpty() && sortingFields.getFirst().field().equals(SortableFields.LAST_UPDATED_TRACE_AT)) {
-            return findWithLastTraceSorting(page, size, criteria, sortingFields.getFirst());
-        }
 
         ProjectRecordSet projectRecordSet = template.inTransaction(READ_ONLY, handle -> {
 
@@ -377,7 +369,7 @@ class ProjectServiceImpl implements ProjectService {
 
             return new ProjectRecordSet(
                     repository.find(size, offset, workspaceId, criteria.projectName(), visibility,
-                            sortingQueryBuilder.toOrderBySql(sortingFields)),
+                            sortingQueryBuilder.toOrderBySql(sortingFields, SORTING_FIELD_MAPPING)),
                     repository.findCount(workspaceId, criteria.projectName(), visibility));
         });
 
@@ -385,35 +377,14 @@ class ProjectServiceImpl implements ProjectService {
             return ProjectPage.empty(page);
         }
 
-        Set<UUID> projectIds = projectRecordSet.content().stream().map(Project::id).collect(toSet());
-
-        Map<UUID, Instant> projectLastUpdatedTraceAtMap = transactionTemplateAsync
-                .nonTransaction(connection -> traceDAO.getLastUpdatedTraceAt(projectIds, workspaceId, connection))
-                .block();
-
-        Map<UUID, Configuration> projectsConfigurations = projectConfigDAO
-                .getConfigurationsByIds(projectRecordSet.content().stream().map(Project::id).collect(toSet()))
-                .contextWrite(ctx -> setContext(ctx, workspaceId, userName))
-                .block();
-
-        List<Project> projects = projectRecordSet.content()
-                .stream()
-                .map(project -> {
-                    Instant lastUpdatedTraceAt = projectLastUpdatedTraceAtMap.get(project.id());
-                    Configuration configuration = projectsConfigurations.get(project.id());
-                    return project.toBuilder()
-                            .lastUpdatedTraceAt(lastUpdatedTraceAt)
-                            .configuration(configuration)
-                            .build();
-                })
-                .toList();
-
-        return new ProjectPage(page, projects.size(), projectRecordSet.total(), projects,
-                sortingFactory.getSortableFields());
+        return new ProjectPage(page, projectRecordSet.content().size(), projectRecordSet.total(),
+                projectRecordSet.content(), sortingFactory.getSortableFields());
     }
 
-    private Map<UUID, Map<String, Object>> getProjectStats(List<UUID> projectIds, String workspaceId) {
-        return traceDAO.getStatsByProjectIds(projectIds, workspaceId)
+    private Map<UUID, Map<String, Object>> getProjectStats(List<UUID> projectIds, String workspaceId,
+            ProjectCriteria criteria) {
+        return traceDAO.getStatsByProjectIds(projectIds, workspaceId, criteria.filters(), criteria.fromTime(),
+                criteria.toTime())
                 .map(stats -> stats.entrySet().stream()
                         .map(entry -> {
                             Map<String, Object> statsMap = entry.getValue().stats()
@@ -436,86 +407,13 @@ class ProjectServiceImpl implements ProjectService {
         return template.inTransaction(READ_ONLY, handle -> handle.attach(ProjectDAO.class).findByIds(ids, workspaceId));
     }
 
-    private Page<Project> findWithLastTraceSorting(int page, int size, @NonNull ProjectCriteria criteria,
-            @NonNull SortingField sortingField) {
-        String workspaceId = requestContext.get().getWorkspaceId();
-        Visibility visibility = requestContext.get().getVisibility();
-        String userName = requestContext.get().getUserName();
-
-        // get all project ids and last updated
-        List<ProjectIdLastUpdated> allProjectIdsLastUpdated = template.inTransaction(READ_ONLY, handle -> {
-            ProjectDAO repository = handle.attach(ProjectDAO.class);
-
-            return repository.getAllProjectIdsLastUpdated(workspaceId, criteria.projectName(), visibility);
-        });
-
-        if (allProjectIdsLastUpdated.isEmpty()) {
-            return ProjectPage.empty(page);
-        }
-
-        // get last trace for each project id
-        Set<UUID> allProjectIds = allProjectIdsLastUpdated.stream().map(ProjectIdLastUpdated::id)
-                .collect(toUnmodifiableSet());
-
-        Map<UUID, Instant> projectLastUpdatedTraceAtMap = transactionTemplateAsync
-                .nonTransaction(connection -> traceDAO.getLastUpdatedTraceAt(allProjectIds, workspaceId, connection))
-                .block();
-
-        if (projectLastUpdatedTraceAtMap == null) {
-            return ProjectPage.empty(page);
-        }
-
-        // sort and paginate
-        List<UUID> sorted = sortByLastTrace(allProjectIdsLastUpdated, projectLastUpdatedTraceAtMap, sortingField);
-        List<UUID> finalIds = PaginationUtils.paginate(page, size, sorted);
-
-        if (CollectionUtils.isEmpty(finalIds)) {
-            // pagination might return an empty list
-            return ProjectPage.empty(page);
-        }
-
-        // get all project properties for the final list of ids
-        Map<UUID, Project> projectsById = template.inTransaction(READ_ONLY, handle -> {
-            ProjectDAO repository = handle.attach(ProjectDAO.class);
-
-            return repository.findByIds(new HashSet<>(finalIds), workspaceId);
-        }).stream().collect(Collectors.toMap(Project::id, Function.identity()));
-
-        Map<UUID, Configuration> projectsConfigurations = projectConfigDAO
-                .getConfigurationsByIds(allProjectIds)
-                .contextWrite(ctx -> setContext(ctx, workspaceId, userName))
-                .block();
-
-        // compose the final projects list by the correct order and add last trace to it
-        List<Project> projects = finalIds.stream()
-                .map(projectsById::get)
-                .map(project -> project.toBuilder()
-                        .lastUpdatedTraceAt(projectLastUpdatedTraceAtMap.get(project.id()))
-                        .configuration(projectsConfigurations.get(project.id()))
-                        .build())
-                .toList();
-
-        return new ProjectPage(page, projects.size(), allProjectIdsLastUpdated.size(), projects,
-                sortingFactory.getSortableFields());
-    }
-
-    private List<UUID> sortByLastTrace(
-            @NonNull List<ProjectIdLastUpdated> allProjectIdsLastUpdated,
-            @NonNull Map<UUID, Instant> projectLastUpdatedTraceAtMap,
-            @NonNull SortingField sortingField) {
-        // for projects with no traces - use last_updated_at
-        allProjectIdsLastUpdated.forEach(
-                project -> projectLastUpdatedTraceAtMap.computeIfAbsent(project.id(), key -> project.lastUpdatedAt()));
-
-        Comparator<Map.Entry<UUID, Instant>> comparator = sortingField.direction() == Direction.DESC
-                ? reverseOrder(Map.Entry.comparingByValue())
-                : Map.Entry.comparingByValue();
-
-        return projectLastUpdatedTraceAtMap.entrySet()
-                .stream()
-                .sorted(comparator)
-                .map(Map.Entry::getKey)
-                .toList();
+    @Override
+    public Mono<Set<UUID>> findProjectIdsByWorkspace() {
+        return Mono.deferContextual(ctx -> Mono
+                .fromCallable(() -> template.inTransaction(READ_ONLY,
+                        handle -> handle.attach(ProjectDAO.class)
+                                .findIdsByWorkspaceId(ctx.get(RequestContext.WORKSPACE_ID))))
+                .subscribeOn(Schedulers.boundedElastic()));
     }
 
     @Override
@@ -534,6 +432,83 @@ class ProjectServiceImpl implements ProjectService {
     }
 
     @Override
+    public Optional<UUID> findProjectIdByName(@NonNull String workspaceId, String projectName) {
+        if (StringUtils.isBlank(projectName)) {
+            return Optional.empty();
+        }
+
+        return findByNames(workspaceId, List.of(projectName)).stream()
+                .findFirst()
+                .map(Project::id);
+    }
+
+    @Override
+    public Mono<Optional<UUID>> resolveProjectId(String projectName) {
+        return Mono.deferContextual(ctx -> {
+            String workspaceId = ctx.get(RequestContext.WORKSPACE_ID);
+            return Mono.fromCallable(() -> findProjectIdByName(workspaceId, projectName))
+                    .subscribeOn(Schedulers.boundedElastic());
+        });
+    }
+
+    @Override
+    public Mono<Optional<UUID>> resolveProjectIdOrCreate(@Nullable UUID projectId, @Nullable String projectName) {
+        if (projectId != null) {
+            return Mono.deferContextual(ctx -> Mono.fromCallable(() -> {
+                validateProjectIdExists(projectId, ctx.get(RequestContext.WORKSPACE_ID));
+                return Optional.of(projectId);
+            }).subscribeOn(Schedulers.boundedElastic()));
+        }
+
+        if (StringUtils.isBlank(projectName)) {
+            return Mono.just(Optional.empty());
+        }
+
+        return Mono.deferContextual(ctx -> Mono.fromCallable(
+                () -> Optional.of(getOrCreate(ctx.get(RequestContext.WORKSPACE_ID),
+                        projectName, ctx.get(RequestContext.USER_NAME)).id()))
+                .subscribeOn(Schedulers.boundedElastic()));
+    }
+
+    @Override
+    public Map<UUID, String> findIdToNameByIds(String workspaceId, Set<UUID> ids) {
+        return findByIds(workspaceId, ids)
+                .stream()
+                .collect(Collectors.toMap(Project::id, Project::name));
+    }
+
+    /**
+     * Bounded demo-project lookup: the demo projects belonging to {@code workspaceIds}, and the only such lookup
+     * there is. Anything unscoped grows with every signup, since one demo project is created per signup, and a
+     * caller would pay for the whole demo population however few workspaces it cares about.
+     *
+     * <p>Scoping by workspace is what lets {@code projects_workspace_id_name_uk (workspace_id, name)} serve the
+     * query, and it bounds the result to the demo projects of those workspaces — a handful each, since
+     * {@link DemoData#PROJECTS} is a fixed list.
+     *
+     * <p>Returning a demo project that saw no activity is harmless: callers test membership, so an id absent from
+     * their rows is never consulted.
+     *
+     * <p>The workspaces are chunked, which keeps the {@code IN} list within the driver's bind-parameter limit
+     * however many are passed. A day's active workspaces sit well inside one chunk, so this is a single query in
+     * practice rather than a loop.
+     */
+    @Override
+    public Mono<Set<UUID>> getDemoProjectIdsInWorkspaces(Set<String> workspaceIds) {
+        if (CollectionUtils.isEmpty(workspaceIds)) {
+            return Mono.just(Set.of());
+        }
+        return Mono.fromCallable(() -> template.inTransaction(READ_ONLY, handle -> {
+            var repository = handle.attach(ProjectDAO.class);
+            return Lists.partition(List.copyOf(workspaceIds), DEMO_PROJECT_WORKSPACE_CHUNK_SIZE)
+                    .stream()
+                    .flatMap(chunk -> repository.findByGlobalNames(DemoData.PROJECTS, Set.copyOf(chunk)).stream())
+                    .map(Project::id)
+                    .collect(Collectors.toUnmodifiableSet());
+        })).subscribeOn(Schedulers.boundedElastic());
+    }
+
+    @Override
     public Mono<Project> getOrCreate(@NonNull String projectName) {
         return makeMonoContextAware((userName, workspaceId) -> Mono
                 .fromCallable(() -> getOrCreate(workspaceId, projectName, userName))
@@ -541,7 +516,8 @@ class ProjectServiceImpl implements ProjectService {
                 .subscribeOn(Schedulers.boundedElastic()));
     }
 
-    private Project getOrCreate(String workspaceId, String projectName, String userName) {
+    @Override
+    public Project getOrCreate(String workspaceId, String projectName, String userName) {
 
         return findByNames(workspaceId, List.of(projectName))
                 .stream()
@@ -564,48 +540,38 @@ class ProjectServiceImpl implements ProjectService {
     }
 
     @Override
-    public Project retrieveByName(@NonNull String projectName) {
+    public Project retrieveByName(@NonNull String projectName, boolean includeStats) {
         var workspaceId = requestContext.get().getWorkspaceId();
-        var userName = requestContext.get().getUserName();
 
-        return template.inTransaction(READ_ONLY, handle -> {
-
+        Optional<Project> projects = template.inTransaction(READ_ONLY, handle -> {
             var repository = handle.attach(ProjectDAO.class);
-
             return repository.findByNames(workspaceId, List.of(projectName))
-                    .stream();
-        }).findFirst()
-                .map(project -> {
-                    Map<UUID, Instant> projectLastUpdatedTraceAtMap = transactionTemplateAsync
-                            .nonTransaction(connection -> {
-                                Set<UUID> projectIds = Set.of(project.id());
-                                return traceDAO.getLastUpdatedTraceAt(projectIds, workspaceId, connection);
-                            }).block();
+                    .stream().findFirst();
+        });
 
-                    Map<UUID, Map<String, Object>> projectStats = getProjectStats(List.of(project.id()),
-                            workspaceId);
-
-                    Configuration configuration = projectConfigDAO.getConfigurations(project.id())
-                            .contextWrite(ctx -> setContext(ctx, workspaceId, userName))
-                            .block();
-
-                    return project.toBuilder()
-                            .lastUpdatedTraceAt(projectLastUpdatedTraceAtMap.get(project.id()))
-                            .feedbackScores(StatsMapper.getStatsFeedbackScores(projectStats.get(project.id())))
-                            .usage(StatsMapper.getStatsUsage(projectStats.get(project.id())))
-                            .duration(StatsMapper.getStatsDuration(projectStats.get(project.id())))
-                            .totalEstimatedCost(
-                                    StatsMapper.getStatsTotalEstimatedCost(projectStats.get(project.id())))
-                            .totalEstimatedCostSum(
-                                    StatsMapper.getStatsTotalEstimatedCostSum(projectStats.get(project.id())))
-                            .traceCount(StatsMapper.getStatsTraceCount(projectStats.get(project.id())))
-                            .guardrailsFailedCount(
-                                    StatsMapper.getStatsGuardrailsFailedCount(projectStats.get(project.id())))
-                            .errorCount(StatsMapper.getStatsErrorCount(projectStats.get(project.id())))
-                            .configuration(configuration)
-                            .build();
-                })
+        return projects
+                .flatMap(project -> verifyVisibility(project, requestContext.get().getVisibility()))
+                .map(project -> includeStats ? enrichWithStats(project, workspaceId) : project)
                 .orElseThrow(this::createNotFoundError);
+    }
+
+    private Project enrichWithStats(Project project, String workspaceId) {
+        Map<UUID, Map<String, Object>> projectStats = getProjectStats(List.of(project.id()),
+                workspaceId, ProjectCriteria.builder().build());
+
+        return project.toBuilder()
+                .feedbackScores(StatsMapper.getStatsFeedbackScores(projectStats.get(project.id())))
+                .usage(StatsMapper.getStatsUsage(projectStats.get(project.id())))
+                .duration(StatsMapper.getStatsDuration(projectStats.get(project.id())))
+                .totalEstimatedCost(
+                        StatsMapper.getStatsTotalEstimatedCost(projectStats.get(project.id())))
+                .totalEstimatedCostSum(
+                        StatsMapper.getStatsTotalEstimatedCostSum(projectStats.get(project.id())))
+                .traceCount(StatsMapper.getStatsTraceCount(projectStats.get(project.id())))
+                .guardrailsFailedCount(
+                        StatsMapper.getStatsGuardrailsFailedCount(projectStats.get(project.id())))
+                .errorCount(StatsMapper.getStatsErrorCount(projectStats.get(project.id())))
+                .build();
     }
 
     @Override
@@ -621,7 +587,11 @@ class ProjectServiceImpl implements ProjectService {
     }
 
     @Override
-    public void recordLastUpdatedTrace(String workspaceId, Collection<ProjectIdLastUpdated> lastUpdatedTraces) {
+    public void recordLastUpdatedTrace(@NonNull String workspaceId,
+            Collection<ProjectIdLastUpdated> lastUpdatedTraces) {
+        if (CollectionUtils.isEmpty(lastUpdatedTraces)) {
+            return;
+        }
         template.inTransaction(WRITE,
                 handle -> handle.attach(ProjectDAO.class).recordLastUpdatedTrace(workspaceId, lastUpdatedTraces));
     }
@@ -658,8 +628,8 @@ class ProjectServiceImpl implements ProjectService {
         });
     }
 
-    private Optional<Project> verifyVisibility(@NonNull Project project) {
-        boolean publicOnly = Optional.ofNullable(requestContext.get().getVisibility())
+    private Optional<Project> verifyVisibility(@NonNull Project project, Visibility visibility) {
+        boolean publicOnly = Optional.ofNullable(visibility)
                 .map(v -> v == Visibility.PUBLIC)
                 .orElse(false);
 
@@ -743,5 +713,22 @@ class ProjectServiceImpl implements ProjectService {
                     .subscribeOn(Schedulers.boundedElastic());
             default -> Mono.error(exception);
         };
+    }
+
+    @Override
+    public UUID validateProjectIdentifier(UUID projectId, String projectName, String workspaceId) {
+        // Verify project visibility
+        if (projectId != null) {
+            return get(projectId).id();
+        }
+
+        // If the project name is provided, find the project by name, then verify visibility so that
+        // public (unauthenticated) requests cannot reach non-public projects by name.
+        return findByNames(workspaceId, List.of(projectName))
+                .stream()
+                .findFirst()
+                .flatMap(project -> verifyVisibility(project, requestContext.get().getVisibility()))
+                .orElseThrow(() -> ErrorUtils.failWithNotFoundName("Project", projectName))
+                .id();
     }
 }

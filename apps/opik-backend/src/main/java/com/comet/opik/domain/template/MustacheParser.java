@@ -6,6 +6,7 @@ import com.github.mustachejava.Mustache;
 import com.github.mustachejava.MustacheException;
 import com.github.mustachejava.MustacheFactory;
 import com.github.mustachejava.codes.ValueCode;
+import jakarta.inject.Singleton;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 
@@ -21,9 +22,24 @@ import java.util.Optional;
 import java.util.Set;
 
 @Slf4j
+@Singleton
 public class MustacheParser implements TemplateParser {
 
-    public static final MustacheFactory MF = new DefaultMustacheFactory();
+    /**
+     * Renders values as written: every consumer feeds an LLM, and escaping a substituted trace input hid its
+     * JSON structure from the judge (OPIK-7354). Escaping also mangled {@code =} and backticks, not just
+     * quotes. Matches the frontend preview and {@link PythonTemplateParser}, which never escaped.
+     */
+    private static final MustacheFactory MF = new DefaultMustacheFactory() {
+        @Override
+        public void encode(String value, Writer writer) {
+            try {
+                writer.write(value);
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        }
+    };
 
     @Override
     public Set<String> extractVariables(String template) {
@@ -42,7 +58,7 @@ public class MustacheParser implements TemplateParser {
             collectVariables(codes, variables);
 
             return variables;
-        } catch (MustacheException ex) {
+        } catch (MustacheException | IllegalArgumentException ex) {
             log.warn("Failed to parse Mustache template for variable extraction", ex);
             return variables; // Return empty set when parsing fails
         }

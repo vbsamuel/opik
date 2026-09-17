@@ -1,6 +1,11 @@
 package com.comet.opik.podam;
 
 import com.comet.opik.api.DatasetItem;
+import com.comet.opik.api.ExperimentItem;
+import com.comet.opik.api.ExperimentType;
+import com.comet.opik.api.FeedbackScore;
+import com.comet.opik.api.FeedbackScoreItem.FeedbackScoreBatchItem;
+import com.comet.opik.api.FeedbackScoreItem.FeedbackScoreBatchItemThread;
 import com.comet.opik.api.Guardrail;
 import com.comet.opik.api.Project;
 import com.comet.opik.api.PromptVersion;
@@ -8,12 +13,18 @@ import com.comet.opik.api.ProviderApiKey;
 import com.comet.opik.api.ProviderApiKeyUpdate;
 import com.comet.opik.api.VisibilityMode;
 import com.comet.opik.api.attachment.StartMultipartUploadRequest;
+import com.comet.opik.api.evaluators.LlmAsJudgeMessage;
+import com.comet.opik.api.evaluators.LlmAsJudgeMessageContent;
 import com.comet.opik.api.validation.InRange;
 import com.comet.opik.podam.manufacturer.BigDecimalTypeManufacturer;
 import com.comet.opik.podam.manufacturer.CategoricalFeedbackDetailTypeManufacturer;
 import com.comet.opik.podam.manufacturer.DatasetItemTypeManufacturer;
+import com.comet.opik.podam.manufacturer.ExperimentItemTypeManufacturer;
+import com.comet.opik.podam.manufacturer.FeedbackScoreTypeManufacturer;
 import com.comet.opik.podam.manufacturer.GuardrailCheckTypeManufacturer;
 import com.comet.opik.podam.manufacturer.JsonNodeTypeManufacturer;
+import com.comet.opik.podam.manufacturer.LlmAsJudgeMessageContentManufacturer;
+import com.comet.opik.podam.manufacturer.LlmAsJudgeMessageManufacturer;
 import com.comet.opik.podam.manufacturer.NumericalFeedbackDetailTypeManufacturer;
 import com.comet.opik.podam.manufacturer.ProjectConfigurationTypeManufacturer;
 import com.comet.opik.podam.manufacturer.PromptVersionManufacturer;
@@ -70,6 +81,7 @@ public class PodamFactoryUtils {
                 new CategoricalFeedbackDetailTypeManufacturer());
         strategy.addOrReplaceTypeManufacturer(JsonNode.class, JsonNodeTypeManufacturer.INSTANCE);
         strategy.addOrReplaceTypeManufacturer(DatasetItem.class, DatasetItemTypeManufacturer.INSTANCE);
+        strategy.addOrReplaceTypeManufacturer(ExperimentItem.class, ExperimentItemTypeManufacturer.INSTANCE);
         strategy.addOrReplaceTypeManufacturer(PromptVersion.class, PromptVersionManufacturer.INSTANCE);
         strategy.addOrReplaceTypeManufacturer(ProviderApiKey.class, ProviderApiKeyManufacturer.INSTANCE);
         strategy.addOrReplaceTypeManufacturer(ProviderApiKeyUpdate.class, ProviderApiKeyUpdateManufacturer.INSTANCE);
@@ -82,8 +94,16 @@ public class PodamFactoryUtils {
                 StartMultipartUploadRequestManufacturer.INSTANCE);
         strategy.addOrReplaceTypeManufacturer(Guardrail.class, GuardrailCheckTypeManufacturer.INSTANCE);
         strategy.addOrReplaceTypeManufacturer(VisibilityMode.class, getVisibilityModeManufacturer());
+        strategy.addOrReplaceTypeManufacturer(ExperimentType.class, getExperimentTypeManufacturer());
         strategy.addOrReplaceTypeManufacturer(Project.Configuration.class,
                 ProjectConfigurationTypeManufacturer.INSTANCE);
+        strategy.addOrReplaceTypeManufacturer(LlmAsJudgeMessageContent.class,
+                LlmAsJudgeMessageContentManufacturer.INSTANCE);
+        strategy.addOrReplaceTypeManufacturer(LlmAsJudgeMessage.class, LlmAsJudgeMessageManufacturer.INSTANCE);
+        strategy.addOrReplaceTypeManufacturer(FeedbackScore.class, FeedbackScoreTypeManufacturer.SCORE);
+        strategy.addOrReplaceTypeManufacturer(FeedbackScoreBatchItem.class, FeedbackScoreTypeManufacturer.BATCH_ITEM);
+        strategy.addOrReplaceTypeManufacturer(FeedbackScoreBatchItemThread.class,
+                FeedbackScoreTypeManufacturer.BATCH_ITEM_THREAD);
 
         return podamFactory;
     }
@@ -94,6 +114,16 @@ public class PodamFactoryUtils {
             public VisibilityMode getType(DataProviderStrategy dataProviderStrategy,
                     AttributeMetadata attributeMetadata, ManufacturingContext manufacturingContext) {
                 return VisibilityMode.DEFAULT;
+            }
+        };
+    }
+
+    private static AbstractTypeManufacturer<ExperimentType> getExperimentTypeManufacturer() {
+        return new AbstractTypeManufacturer<>() {
+            @Override
+            public ExperimentType getType(DataProviderStrategy dataProviderStrategy,
+                    AttributeMetadata attributeMetadata, ManufacturingContext manufacturingContext) {
+                return ExperimentType.REGULAR;
             }
         };
     }
